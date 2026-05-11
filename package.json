@@ -1,0 +1,35 @@
+{
+  "name": "shibumi-server",
+  "version": "0.0.0",
+  "description": "Self-host deploy helper for Shibumi Stack.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "shibumi-server": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "homepage": "https://shibumistack.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bitbonsai/shibumistack.dev.git",
+    "directory": "packages/shibumi-server"
+  },
+  "bugs": {
+    "url": "https://github.com/bitbonsai/shibumistack.dev/issues"
+  },
+  "keywords": [
+    "shibumi",
+    "deploy",
+    "self-host",
+    "vps",
+    "bun",
+    "caddy"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
