@@ -73,6 +73,21 @@ describe("pinned installation", () => {
     expect(unit).toContain('ExecStart="/home/example/.bun/bin/bun"');
     expect(unit).toContain("MemoryMax=1536M");
     expect(unit).not.toContain("bunx");
+
+    const check = Bun.spawn([
+      process.execPath,
+      join(paths.currentRelease, "src", "cli.ts"),
+      "--help",
+    ], { cwd: paths.currentRelease, stdout: "pipe", stderr: "pipe" });
+    const [checkExit, checkStdout, checkStderr] = await Promise.all([
+      check.exited,
+      new Response(check.stdout).text(),
+      new Response(check.stderr).text(),
+    ]);
+    expect(checkStderr).toBe("");
+    expect(checkExit).toBe(0);
+    expect(checkStdout).toContain("Interactive setup");
+
     expect(services.reloads).toBe(1);
     expect(services.restarts).toBe(0);
   });

@@ -34,6 +34,8 @@ Use `SHIBUMI_COMPOSE_COMMAND=podman-compose` on hosts with the standalone Compos
 - Failed preflights, fetches, builds, or tests must not run `compose up`.
 - Preserve host resource guards: preflight memory/disk floors, a cancellable build deadline, systemd ceilings, and per-app Compose limits.
 - The systemd unit must execute a pinned local package copy, never an unpinned `bunx` command. Init must preserve machine config/secrets; repeated app registration must not rotate secrets.
+- No-argument interactive setup combines `init` and `add`; keep both explicit commands for automation. Parse prompted test commands into argument arrays without invoking a shell.
+- Dynamically import interactive prompt dependencies. The pinned service release does not include `node_modules`, so `serve` and `check` must start without resolving `@clack/prompts`.
 - Normal unit tests must fake Git, Podman, and systemd. Real integration tests must use unique disposable projects and clean up.
 
 ## Public versus local

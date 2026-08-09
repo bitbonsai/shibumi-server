@@ -1,0 +1,165 @@
+import { cancel, confirm, intro, isCancel, outro, spinner, text } from "@clack/prompts";
+import { isAbsolute, join, resolve } from "node:path";
+import { addApp, initializeInstallation, installationPaths, type AddAppOptions } from "./install";
+
+const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+export type SetupAnswers = Omit<AddAppOptions, "home">;
+
+export function parseCommandLine(input: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | undefined;
+  let started = false;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const character = input[index];
+    if (character === "\0" || character === "\n" || character === "\r") {
+      throw new Error("command must stay on one line");
+    }
+    if (quote) {
+      if (character === quote) {
+        quote = undefined;
+      } else if (character === "\\" && quote === '"') {
+        index += 1;
+        if (index >= input.length) throw new Error("command ends with an escape");
+        current += input[index];
+      } else {
+        current += character;
+      }
+      started = true;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      started = true;
+    } else if (character === "\\") {
+      index += 1;
+      if (index >= input.length) throw new Error("command ends with an escape");
+      current += input[index];
+      started = true;
+    } else if (/\s/.test(character)) {
+      if (started) {
+        args.push(current);
+        current = "";
+        started = false;
+      }
+    } else {
+      current += character;
+      started = true;
+    }
+  }
+
+  if (quote) throw new Error("command has an unterminated quote");
+  if (started) args.push(current);
+  if (args.length === 0 || args.some((part) => part.length === 0)) {
+    throw new Error("command must contain at least one non-empty argument");
+  }
+  return args;
+}
+
+export function defaultCheckout(domain: string): string {
+  return join("/srv/shibumi/apps", domain.replaceAll(".", "-"));
+}
+
+function cancelled(value: unknown): value is symbol {
+  return isCancel(value);
+}
+
+function stopSetup(): undefined {
+  cancel("Setup cancelled.");
+  return undefined;
+}
+
+export async function promptForSetup(): Promise<SetupAnswers | undefined> {
+  intro("渋み  shibumi-server");
+
+  const domain = await text({
+    message: "Which domain will this app use?",
+    placeholder: "example.com",
+    validate: (value) => DOMAIN.test(value) ? undefined : "Use a lowercase public hostname such as example.com",
+  });
+  if (cancelled(domain)) return stopSetup();
+
+  const repository = await text({
+    message: "Which GitHub repository?",
+    placeholder: "owner/repository",
+    validate: (value) => REPOSITORY.test(value) ? undefined : "Use owner/repository",
+  });
+  if (cancelled(repository)) return stopSetup();
+
+  const checkout = await text({
+    message: "Where should deployments live?",
+    defaultValue: defaultCheckout(domain),
+    validate: (value) => isAbsolute(value) ? undefined : "Use an absolute path",
+  });
+  if (cancelled(checkout)) return stopSetup();
+
+  const port = await text({
+    message: "Which local port should Caddy use?",
+    defaultValue: "9100",
+    validate: (value) => {
+      const parsed = Number(value);
+      return Number.isInteger(parsed) && parsed >= 1024 && parsed <= 65_535
+        ? undefined
+        : "Use an integer between 1024 and 65535";
+    },
+  });
+  if (cancelled(port)) return stopSetup();
+
+  const testCommand = await text({
+    message: "Which test command should run before deploy?",
+    defaultValue: "bun test",
+    validate: (value) => {
+      try {
+        parseCommandLine(value);
+      } catch (error) {
+        return error instanceof Error ? error.message : "Use a valid command";
+      }
+    },
+  });
+  if (cancelled(testCommand)) return stopSetup();
+
+  const accepted = await confirm({
+    message: `Install shibumi-server and add ${domain}?`,
+    initialValue: true,
+  });
+  if (cancelled(accepted) || !accepted) return stopSetup();
+
+  return {
+    domain,
+    repository,
+    checkout,
+    hostPort: Number(port),
+    testCommand: parseCommandLine(testCommand),
+  };
+}
+
+export async function runInteractiveSetup(options: {
+  home: string;
+  packageRoot: string;
+  bunExecutable: string;
+}): Promise<void> {
+  const answers = await promptForSetup();
+  if (!answers) return;
+
+  const progress = spinner();
+  progress.start("Installing the pinned service");
+  const installation = await initializeInstallation({
+    home: options.home,
+    packageRoot: resolve(options.packageRoot),
+    bunExecutable: options.bunExecutable,
+  });
+  progress.message(`Adding ${answers.domain}`);
+  const app = await addApp({ home: options.home, ...answers });
+  progress.stop(`shibumi-server ${installation.version} is ready`);
+
+  const paths = installationPaths(options.home);
+  outro([
+    `Webhook URL: https://${answers.domain}/hooks/github/${app.appId}`,
+    `Webhook secret: ${app.secretEnvironmentVariable} in ${paths.secrets}`,
+    `Caddy upstream: 127.0.0.1:${answers.hostPort}`,
+    "Next: add the Caddy route and GitHub webhook.",
+  ].join("\n"));
+}

@@ -1,5 +1,6 @@
 export type CliCommand =
   | { name: "help" }
+  | { name: "setup" }
   | { name: "check" | "serve"; config: string }
   | { name: "init" }
   | {
@@ -17,7 +18,9 @@ export type CliCommand =
     };
 
 export const usageText = `Usage:
-  shibumi-server init
+  shibumi-server                         Interactive setup
+  shibumi-server setup                   Interactive setup
+  shibumi-server init                    Install only (automation)
   shibumi-server add <domain> --repository <owner/repo> --checkout <absolute-path> --port <port> [options] -- <test-command...>
   shibumi-server check --config <path>
   shibumi-server serve --config <path>
@@ -55,6 +58,10 @@ function required(values: Map<string, string>, option: string): string {
 
 export function parseCliArgs(argv: string[]): CliCommand {
   const [name, ...args] = argv;
+  if (!name || name === "setup") {
+    if (args.length > 0) fail("setup does not accept arguments");
+    return { name: "setup" };
+  }
   if (name === "--help" || name === "-h" || name === "help") {
     if (args.length > 0) fail("help does not accept arguments");
     return { name: "help" };

@@ -60,17 +60,18 @@ HMAC verification prevents fake requests from authorizing code, but it is not vo
 
 ## Installation
 
-The first release targets Linux with Bun, rootless Podman, Caddy, and a systemd user session. Once the package is published, initialize the host with an exact package version:
+The first release targets Linux with Bun, rootless Podman, Caddy, and a systemd user session. Once the package is published, log in to the VPS or homelab server and run the pinned version:
+
+```bash
+bunx shibumi-server@0.1.0
+```
+
+The interactive setup asks for the domain, GitHub repository, deployment directory, local port, and test command. It installs the selected release locally, creates mode-restricted config and secret files, writes a resource-limited systemd user service, and registers the app. Restarts use the same installed release; upgrades are always explicit.
+
+For scripts and unattended setup, the two operations remain available separately:
 
 ```bash
 bunx shibumi-server@0.1.0 init
-```
-
-`init` copies that exact release to `~/.local/share/shibumi-server/releases/0.1.0`, updates the local `current` symlink, creates mode-restricted config and secret files, and writes `~/.config/systemd/user/shibumi-server.service`. The unit runs the pinned local copy; it never downloads through `bunx` during restart. Re-running `init` preserves machine config and secrets and restarts the service only when it is already active.
-
-Register an application with explicit local settings. Everything after `--` is the test command stored as an argument array:
-
-```bash
 bunx shibumi-server@0.1.0 add example.com \
   --repository owner/repository \
   --checkout /srv/shibumi/apps/example-com \
@@ -78,9 +79,11 @@ bunx shibumi-server@0.1.0 add example.com \
   -- bun test
 ```
 
+`init` stores the release under `~/.local/share/shibumi-server/releases/0.1.0`, updates the local `current` symlink, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config and stores everything after `--` as a test-command argument array, never a shell string.
+
 Hosts with the standalone Compose frontend add `--compose-command podman-compose`. Optional flags configure the branch ref, Compose file and service, and health path; run `bunx shibumi-server@0.1.0 --help` for the full syntax.
 
-`add` validates the complete config, generates a unique 32-byte webhook secret in `~/.config/shibumi-server/secrets.env`, enables the user service, and restarts it so the new app is loaded. It prints the webhook URL, secret variable name, and Caddy upstream, but deliberately does not modify Caddy or GitHub. Add the webhook route before the site's normal Caddy handler, then copy the secret from the mode-`0600` file into GitHub's webhook settings.
+Setup generates a unique 32-byte webhook secret, enables the user service, and prints the webhook URL, secret variable name, and Caddy upstream. It deliberately does not modify Caddy or GitHub. Add the webhook route before the site's normal handler, then copy the secret from the mode-`0600` file into GitHub's webhook settings.
 
 ## License
 

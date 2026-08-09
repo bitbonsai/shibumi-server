@@ -38,6 +38,14 @@ try {
 
   if (command.name === "help") {
     console.log(usageText);
+  } else if (command.name === "setup") {
+    requireLinux();
+    const { runInteractiveSetup } = await import("./setup");
+    await runInteractiveSetup({
+      home: homedir(),
+      packageRoot: resolve(import.meta.dir, ".."),
+      bunExecutable: process.execPath,
+    });
   } else if (command.name === "init") {
     requireLinux();
     const result = await initializeInstallation({

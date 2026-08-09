@@ -14,9 +14,10 @@ async function cli(args: string[]) {
   return { exitCode, stdout, stderr };
 }
 
-test("CLI help documents pinned installation and app registration", async () => {
+test("CLI help documents interactive setup, pinned installation, and app registration", async () => {
   const result = await cli(["--help"]);
   expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain("Interactive setup");
   expect(result.stdout).toContain("shibumi-server init");
   expect(result.stdout).toContain("shibumi-server add <domain>");
   expect(result.stderr).toBe("");
