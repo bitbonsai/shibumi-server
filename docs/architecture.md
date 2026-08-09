@@ -102,6 +102,8 @@ Never commit webhook secrets, application keys, repository credentials, registry
 
 ## Service installation
 
-The first release targets Bun and a systemd user service. A future `bunx shibumi-server install` command will install a pinned local package and write the unit. The unit will not execute an unpinned package download at every restart.
+The first release targets Bun and a systemd user service. `bunx shibumi-server@<version> init` copies the exact invoked package into a versioned release directory, atomically updates a local `current` symlink, creates mode-`0600` config and secret files, and writes the user unit. The unit executes that local copy and never downloads through `bunx` during startup or restart. Re-running `init` preserves machine-owned files and lets an active service move to the newly invoked version.
 
-Caddy API automation, automatic port allocation, immutable-image rollback, deployment queues, GitHub commit statuses, GHCR, and Node/`npx` compatibility are later work.
+`add <domain>` requires an explicit repository, absolute checkout, host port, and test command. The domain becomes a safe app ID; the rest of the deployment values come only from flags and safe defaults. Registration validates the complete config before writing it, creates a different random 32-byte HMAC secret for each app, and restarts the service. Repeating the same registration is idempotent and does not rotate the secret; conflicting settings fail closed.
+
+The installer does not clone repositories, allocate ports, edit Caddy, call GitHub, or print secret values. Those boundaries keep source credentials and public routing under operator control. Caddy API automation, automatic port allocation, immutable-image rollback, deployment queues, GitHub commit statuses, GHCR, and Node/`npx` compatibility are later work.

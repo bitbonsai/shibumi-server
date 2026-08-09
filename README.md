@@ -2,7 +2,7 @@
 
 Small, secure webhook deployments for a VPS running rootless Podman.
 
-> Experimental: the receiver is being built and dogfooded. The installation commands are not published yet.
+> Experimental: the receiver and installer are implemented and being dogfooded. Release `0.1.0` is not published yet.
 
 ## How it works
 
@@ -56,16 +56,29 @@ Configure one webhook per app:
 
 The receiver verifies `X-Hub-Signature-256`, repository, branch, and full commit SHA. If the app is already deploying, it returns `409 Conflict`; deployments are not queued.
 
-## Future installation
+## Installation
 
-The intended installation UX is:
+The first release targets Linux with Bun, rootless Podman, Caddy, and a systemd user session. Once the package is published, initialize the host with an exact package version:
 
 ```bash
-bunx shibumi-server init
-bunx shibumi-server add example.com
+bunx shibumi-server@0.1.0 init
 ```
 
-The installer will place a pinned copy on the server and create a systemd unit. It will not run an unpinned `bunx` download on every restart.
+`init` copies that exact release to `~/.local/share/shibumi-server/releases/0.1.0`, updates the local `current` symlink, creates mode-restricted config and secret files, and writes `~/.config/systemd/user/shibumi-server.service`. The unit runs the pinned local copy; it never downloads through `bunx` during restart. Re-running `init` preserves machine config and secrets and restarts the service only when it is already active.
+
+Register an application with explicit local settings. Everything after `--` is the test command stored as an argument array:
+
+```bash
+bunx shibumi-server@0.1.0 add example.com \
+  --repository owner/repository \
+  --checkout /srv/shibumi/apps/example-com \
+  --port 9100 \
+  -- bun test
+```
+
+Hosts with the standalone Compose frontend add `--compose-command podman-compose`. Optional flags configure the branch ref, Compose file and service, and health path; run `bunx shibumi-server@0.1.0 --help` for the full syntax.
+
+`add` validates the complete config, generates a unique 32-byte webhook secret in `~/.config/shibumi-server/secrets.env`, enables the user service, and restarts it so the new app is loaded. It prints the webhook URL, secret variable name, and Caddy upstream, but deliberately does not modify Caddy or GitHub. Add the webhook route before the site's normal Caddy handler, then copy the secret from the mode-`0600` file into GitHub's webhook settings.
 
 ## License
 
