@@ -26,6 +26,9 @@ describe("configuration", () => {
   test("applies safe defaults", () => {
     const parsed = parseConfig(config());
     expect(parsed.listen.maxBodyBytes).toBe(1_048_576);
+    expect(parsed.apps.myapp.minimumFreeMemoryMb).toBe(2_048);
+    expect(parsed.apps.myapp.minimumFreeDiskMb).toBe(4_096);
+    expect(parsed.apps.myapp.buildTimeoutMs).toBe(600_000);
     expect(parsed.apps.myapp.healthAttempts).toBe(20);
   });
 
@@ -34,6 +37,12 @@ describe("configuration", () => {
     publicListener.listen.hostname = "0.0.0.0";
     expect(() => parseConfig(publicListener)).toThrow("loopback");
     expect(() => parseConfig(config({ healthUrl: "https://example.com/healthz" }))).toThrow("loopback HTTP URL");
+  });
+
+  test("requires meaningful resource floors and build deadlines", () => {
+    expect(() => parseConfig(config({ minimumFreeMemoryMb: 128 }))).toThrow("between 256");
+    expect(() => parseConfig(config({ minimumFreeDiskMb: 128 }))).toThrow("between 256");
+    expect(() => parseConfig(config({ buildTimeoutMs: 999 }))).toThrow("between 1000");
   });
 
   test("requires the health URL to use the assigned app port", () => {

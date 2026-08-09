@@ -5,3 +5,8 @@ services:
       dockerfile: Containerfile
     ports:
       - "127.0.0.1:${SHIBUMI_PORT}:3000"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M

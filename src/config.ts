@@ -18,6 +18,9 @@ export interface AppConfig {
   testCommand: string[];
   healthUrl: string;
   secretEnvironmentVariable: string;
+  minimumFreeMemoryMb: number;
+  minimumFreeDiskMb: number;
+  buildTimeoutMs: number;
   healthAttempts: number;
   healthIntervalMs: number;
 }
@@ -148,6 +151,19 @@ export function parseConfig(value: unknown): ServerConfig {
       testCommand: command(appValue.testCommand, `apps.${appId}.testCommand`),
       healthUrl,
       secretEnvironmentVariable,
+      minimumFreeMemoryMb: integer(
+        appValue.minimumFreeMemoryMb ?? 2_048,
+        `apps.${appId}.minimumFreeMemoryMb`,
+        256,
+        1_048_576,
+      ),
+      minimumFreeDiskMb: integer(
+        appValue.minimumFreeDiskMb ?? 4_096,
+        `apps.${appId}.minimumFreeDiskMb`,
+        256,
+        16_777_216,
+      ),
+      buildTimeoutMs: integer(appValue.buildTimeoutMs ?? 600_000, `apps.${appId}.buildTimeoutMs`, 1_000, 3_600_000),
       healthAttempts: integer(appValue.healthAttempts ?? 20, `apps.${appId}.healthAttempts`, 1, 120),
       healthIntervalMs: integer(appValue.healthIntervalMs ?? 500, `apps.${appId}.healthIntervalMs`, 10, 60_000),
     };

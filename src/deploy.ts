@@ -1,15 +1,21 @@
+import { readFile, statfs } from "node:fs/promises";
+import { freemem } from "node:os";
 import { composePath, type AppConfig } from "./config";
+
+const MEBIBYTE = 1024 * 1024;
 
 export interface CommandOptions {
   cwd?: string;
   env?: Record<string, string>;
   capture?: boolean;
+  timeoutMs?: number;
 }
 
 export interface CommandResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  timedOut?: boolean;
 }
 
 export interface CommandRunner {
@@ -23,8 +29,18 @@ export interface DeploymentLogger {
 
 export type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+export interface ResourceAvailability {
+  memoryBytes: number;
+  diskBytes: number;
+}
+
+export interface ResourceInspector {
+  available(checkout: string): Promise<ResourceAvailability>;
+}
+
 export interface DeployDependencies {
   runner: CommandRunner;
+  resources: ResourceInspector;
   fetch: Fetcher;
   sleep(milliseconds: number): Promise<void>;
   logger: DeploymentLogger;
@@ -51,21 +67,61 @@ function cleanEnvironment(extra: Record<string, string>): Record<string, string>
 export class BunCommandRunner implements CommandRunner {
   async run(command: string, args: string[], options: CommandOptions = {}): Promise<CommandResult> {
     const capture = options.capture ?? false;
-    const process = Bun.spawn([command, ...args], {
+    let timedOut = false;
+    const subprocess = Bun.spawn([command, ...args], {
       cwd: options.cwd,
       env: cleanEnvironment(options.env ?? {}),
       stdin: "ignore",
       stdout: capture ? "pipe" : "inherit",
       stderr: capture ? "pipe" : "inherit",
+      detached: process.platform !== "win32",
     });
+    const timer = options.timeoutMs === undefined
+      ? undefined
+      : setTimeout(() => {
+          timedOut = true;
+          try {
+            if (process.platform === "win32") subprocess.kill("SIGKILL");
+            else process.kill(-subprocess.pid, "SIGKILL");
+          } catch {
+            subprocess.kill("SIGKILL");
+          }
+        }, options.timeoutMs);
 
-    const [exitCode, stdout, stderr] = await Promise.all([
-      process.exited,
-      capture ? new Response(process.stdout).text() : Promise.resolve(""),
-      capture ? new Response(process.stderr).text() : Promise.resolve(""),
-    ]);
-    return { exitCode, stdout, stderr };
+    try {
+      const [exitCode, stdout, stderr] = await Promise.all([
+        subprocess.exited,
+        capture ? new Response(subprocess.stdout).text() : Promise.resolve(""),
+        capture ? new Response(subprocess.stderr).text() : Promise.resolve(""),
+      ]);
+      return { exitCode, stdout, stderr, timedOut };
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
+}
+
+export class HostResourceInspector implements ResourceInspector {
+  async available(checkout: string): Promise<ResourceAvailability> {
+    const [memoryBytes, filesystem] = await Promise.all([
+      availableMemoryBytes(),
+      statfs(checkout),
+    ]);
+    return {
+      memoryBytes,
+      diskBytes: filesystem.bavail * filesystem.bsize,
+    };
+  }
+}
+
+async function availableMemoryBytes(): Promise<number> {
+  if (process.platform === "linux") {
+    const memoryInfo = await readFile("/proc/meminfo", "utf8");
+    const available = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(memoryInfo);
+    if (!available) throw new Error("cannot determine available memory from /proc/meminfo");
+    return Number(available[1]) * 1024;
+  }
+  return freemem();
 }
 
 async function runChecked(
@@ -77,11 +133,41 @@ async function runChecked(
 ): Promise<CommandResult> {
   dependencies.logger.info("deployment stage started", { stage });
   const result = await dependencies.runner.run(command, args, options);
+  if (result.timedOut) {
+    throw new DeploymentError(stage, `${stage} timed out after ${options.timeoutMs}ms`);
+  }
   if (result.exitCode !== 0) {
     const detail = result.stderr.trim();
     throw new DeploymentError(stage, detail ? `${stage} failed: ${detail}` : `${stage} failed with exit code ${result.exitCode}`);
   }
   return result;
+}
+
+async function checkResources(app: AppConfig, dependencies: DeployDependencies): Promise<void> {
+  let available: ResourceAvailability;
+  try {
+    available = await dependencies.resources.available(app.checkout);
+  } catch (error) {
+    throw new DeploymentError(
+      "preflight",
+      `resource preflight failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const memoryMb = Math.floor(available.memoryBytes / MEBIBYTE);
+  if (memoryMb < app.minimumFreeMemoryMb) {
+    throw new DeploymentError(
+      "preflight",
+      `resource preflight failed: ${memoryMb} MiB memory available; ${app.minimumFreeMemoryMb} MiB required`,
+    );
+  }
+  const diskMb = Math.floor(available.diskBytes / MEBIBYTE);
+  if (diskMb < app.minimumFreeDiskMb) {
+    throw new DeploymentError(
+      "preflight",
+      `resource preflight failed: ${diskMb} MiB disk available; ${app.minimumFreeDiskMb} MiB required`,
+    );
+  }
 }
 
 async function waitForHealth(app: AppConfig, dependencies: DeployDependencies): Promise<void> {
@@ -102,6 +188,7 @@ async function waitForHealth(app: AppConfig, dependencies: DeployDependencies): 
 
 export async function deploy(appId: string, app: AppConfig, commit: string, dependencies: DeployDependencies): Promise<void> {
   const startedAt = Date.now();
+  await checkResources(app, dependencies);
   const git = (args: string[], stage: string, capture = false) =>
     runChecked(dependencies, stage, "git", ["-C", app.checkout, ...args], { capture });
 
@@ -125,7 +212,13 @@ export async function deploy(appId: string, app: AppConfig, commit: string, depe
   ];
   const options: CommandOptions = { env: { SHIBUMI_PORT: String(app.hostPort) } };
 
-  await runChecked(dependencies, "build", composeExecutable, [...compose, "build"], options);
+  await runChecked(
+    dependencies,
+    "build",
+    composeExecutable,
+    [...compose, "build"],
+    { ...options, timeoutMs: app.buildTimeoutMs },
+  );
   await runChecked(
     dependencies,
     "test",
@@ -146,6 +239,7 @@ export async function deploy(appId: string, app: AppConfig, commit: string, depe
 export function defaultDeployDependencies(logger: DeploymentLogger = console): DeployDependencies {
   return {
     runner: new BunCommandRunner(),
+    resources: new HostResourceInspector(),
     fetch,
     sleep: (milliseconds) => Bun.sleep(milliseconds),
     logger,

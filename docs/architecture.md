@@ -50,6 +50,37 @@ git reset --hard <verified-commit>
 
 The fetched commit must exactly match the signed webhook payload. Runtime data and secrets must live outside the checkout.
 
+## Resource guards
+
+Before changing the checkout or starting a build, the receiver checks Linux `MemAvailable` and free space on the checkout filesystem. The default per-app floors are 2 GiB of available memory and 4 GiB of disk. If either cannot be measured or is below its configured floor, deployment stops at the `preflight` stage. Put the checkout and rootless Podman storage on the same filesystem; otherwise the disk check does not cover image storage.
+
+Compose builds have a configurable deadline, 10 minutes by default. The receiver starts each command in its own process group, sends `SIGKILL` to the build group when it exceeds the deadline, and never proceeds to tests or startup. This bounds a stuck build, but a killed build may leave intermediate Podman data for an operator to inspect and prune deliberately.
+
+The shipped systemd unit adds cgroup ceilings for the receiver and direct child processes:
+
+```ini
+MemoryHigh=1280M
+MemoryMax=1536M
+MemorySwapMax=256M
+CPUQuota=200%
+TasksMax=512
+OOMPolicy=stop
+```
+
+These defaults are intended to preserve a small host rather than make every framework build succeed. Tune them only after reserving capacity for the operating system, SSH, Caddy, and already-running applications. Podman-managed application containers need explicit Compose limits of their own:
+
+```yaml
+services:
+  web:
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+```
+
+Preflight checks, deadlines, and cgroup ceilings are defense in depth, not a substitute for filesystem quotas, monitoring, backups, or testing builds away from a constrained production VPS.
+
 ## Ports and Caddy
 
 Every app has an explicit Compose frontend and host port. Modern installations can use `["podman", "compose"]`; hosts with the standalone frontend can use `["podman-compose"]`. Compose binds the app only to loopback:

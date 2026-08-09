@@ -67,6 +67,9 @@ integrationTest("deploys a signed webhook through a disposable Git checkout and 
       testCommand: ["bun", "--eval", "if (!(await Bun.file('server.ts').exists())) process.exit(1)"],
       healthUrl: `http://127.0.0.1:${hostPort}/healthz`,
       secretEnvironmentVariable: "SHIBUMI_SECRET_MYAPP",
+      minimumFreeMemoryMb: 256,
+      minimumFreeDiskMb: 256,
+      buildTimeoutMs: 60_000,
       healthAttempts: 30,
       healthIntervalMs: 250,
     };

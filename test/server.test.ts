@@ -58,6 +58,7 @@ class SuccessfulRunner implements CommandRunner {
 function dependencies(runner: CommandRunner = new SuccessfulRunner()): DeployDependencies {
   return {
     runner,
+    resources: { available: async () => ({ memoryBytes: 8 * 1024 ** 3, diskBytes: 100 * 1024 ** 3 }) },
     fetch: async () => new Response("ok"),
     sleep: async () => {},
     logger: { info() {}, error() {} },

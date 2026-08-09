@@ -10,6 +10,13 @@ EnvironmentFile=%h/.config/shibumi-server/secrets.env
 ExecStart=%h/.bun/bin/bun %h/.local/share/shibumi-server/src/cli.ts serve --config %h/.config/shibumi-server/config.json
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=30
+MemoryHigh=1280M
+MemoryMax=1536M
+MemorySwapMax=256M
+CPUQuota=200%
+TasksMax=512
+OOMPolicy=stop
 NoNewPrivileges=true
 PrivateTmp=true
 

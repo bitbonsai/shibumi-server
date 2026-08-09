@@ -31,7 +31,8 @@ Use `SHIBUMI_COMPOSE_COMMAND=podman-compose` on hosts with the standalone Compos
 - Keep the HTTP listener and app ports on loopback behind Caddy.
 - Keep webhook secrets, credentials, real machine config, and deployment state out of Git and npm packages.
 - Preserve the per-app lock: concurrent deployment requests return `409` and are not queued.
-- Failed fetches, builds, or tests must not run `compose up`.
+- Failed preflights, fetches, builds, or tests must not run `compose up`.
+- Preserve host resource guards: preflight memory/disk floors, a cancellable build deadline, systemd ceilings, and per-app Compose limits.
 - Normal unit tests must fake Git and Podman. Real integration tests must use unique disposable projects and clean up.
 
 ## Public versus local
