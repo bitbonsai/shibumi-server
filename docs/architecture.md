@@ -29,13 +29,16 @@ GitHub requests must:
 
 - fit within the configured body limit;
 - use JSON;
+- include a well-formed `X-GitHub-Delivery` UUID and supported event name;
 - include a valid `X-Hub-Signature-256` HMAC over the raw body;
 - identify the configured repository and exact `refs/heads/*` branch; and
 - contain a full lowercase 40-character commit SHA.
 
-A signed GitHub `ping` receives `200`. A valid push receives `202` while deployment continues asynchronously.
+Malformed authentication headers are rejected before the body is read. A signed GitHub `ping` receives `200`. A valid push receives `202` while deployment continues asynchronously.
 
-Deployments are locked per application. A second request for an app that is already deploying receives `409 Conflict` and is not queued. It must be redelivered after the active deployment finishes.
+Accepted delivery UUIDs are held in an in-memory, bounded 24-hour replay cache. Repeating a successful or active delivery receives `200` and does not build again. The cache deliberately records only fully verified pushes after the app lock is acquired, so an attacker cannot fill it with unsigned IDs. Failed deployments are removed so an operator can redeliver them; a delivery rejected with `409` is never recorded. Durable replay state across service restarts is later work.
+
+Deployments are locked per application. A different delivery for an app that is already deploying receives `409 Conflict` and is not queued. It must be redelivered after the active deployment finishes.
 
 ## Deterministic checkout
 
@@ -93,6 +96,8 @@ services:
 ```
 
 Caddy maps the public domain to that port. Other Compose services remain private on the application network. Ports are operational configuration, not secrets, but real machine inventory does not belong in the public repository.
+
+HMAC authentication prevents forged hooks from authorizing a deployment; it does not absorb volumetric traffic. Reject abuse at Caddy, the firewall, or an upstream provider before it reaches Bun. An optional source-IP allowlist must be generated from GitHub's current `hooks` CIDRs at `https://api.github.com/meta` and updated automatically. Do not copy a static range into the project and forget it, and do not trust public `X-Forwarded-For` values unless the listener remains loopback-only behind a correctly configured proxy.
 
 ## Secrets
 

@@ -98,6 +98,7 @@ integrationTest("deploys a signed webhook through a disposable Git checkout and 
       headers: {
         "content-type": "application/json",
         "x-github-event": "push",
+        "x-github-delivery": "72d3162e-cc78-11e3-81ab-4c9367dc0958",
         "x-hub-signature-256": `sha256=${signature}`,
       },
       body,

@@ -1,6 +1,7 @@
 import type { ServerConfig } from "./config";
+import { DeliveryCache } from "./deliveries";
 import { defaultDeployDependencies, deploy, type DeployDependencies, type DeploymentLogger } from "./deploy";
-import { parseGitHubPush, verifyGitHubSignature } from "./github";
+import { isGitHubSignature, normalizeGitHubDeliveryId, parseGitHubPush, verifyGitHubSignature } from "./github";
 import { AppLocks } from "./locks";
 
 class BodyTooLargeError extends Error {}
@@ -41,6 +42,7 @@ export interface WebhookServiceOptions {
   environment?: Record<string, string | undefined>;
   locks?: AppLocks;
   deployDependencies?: DeployDependencies;
+  deliveries?: DeliveryCache;
   logger?: DeploymentLogger;
 }
 
@@ -48,6 +50,7 @@ export class WebhookService {
   readonly #environment: Record<string, string | undefined>;
   readonly #locks: AppLocks;
   readonly #deployDependencies: DeployDependencies;
+  readonly #deliveries: DeliveryCache;
   readonly #logger: DeploymentLogger;
   readonly #tasks = new Set<Promise<void>>();
 
@@ -59,6 +62,7 @@ export class WebhookService {
     this.#locks = options.locks ?? new AppLocks();
     this.#logger = options.logger ?? console;
     this.#deployDependencies = options.deployDependencies ?? defaultDeployDependencies(this.#logger);
+    this.#deliveries = options.deliveries ?? new DeliveryCache();
   }
 
   async handle(request: Request): Promise<Response> {
@@ -73,6 +77,18 @@ export class WebhookService {
 
     const contentType = request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
     if (contentType !== "application/json") return json(415, { error: "unsupported_media_type" });
+    const event = request.headers.get("x-github-event");
+    if (event !== "ping" && event !== "push") return json(400, { error: "unsupported_event" });
+    const deliveryId = normalizeGitHubDeliveryId(request.headers.get("x-github-delivery"));
+    if (!deliveryId) return json(400, { error: "invalid_delivery" });
+    const signature = request.headers.get("x-hub-signature-256");
+    if (!isGitHubSignature(signature)) return json(401, { error: "invalid_signature" });
+
+    const secret = this.#environment[app.secretEnvironmentVariable];
+    if (!secret) {
+      this.#logger.error("webhook secret is unavailable", { app: appId });
+      return json(503, { error: "service_unavailable" });
+    }
 
     let body: Uint8Array;
     try {
@@ -82,12 +98,7 @@ export class WebhookService {
       throw error;
     }
 
-    const secret = this.#environment[app.secretEnvironmentVariable];
-    if (!secret) {
-      this.#logger.error("webhook secret is unavailable", { app: appId });
-      return json(503, { error: "service_unavailable" });
-    }
-    if (!verifyGitHubSignature(secret, body, request.headers.get("x-hub-signature-256"))) {
+    if (!verifyGitHubSignature(secret, body, signature)) {
       return json(401, { error: "invalid_signature" });
     }
 
@@ -98,9 +109,7 @@ export class WebhookService {
       return json(400, { error: "invalid_json" });
     }
 
-    const event = request.headers.get("x-github-event");
     if (event === "ping") return json(200, { ok: true });
-    if (event !== "push") return json(400, { error: "unsupported_event" });
 
     let push;
     try {
@@ -110,6 +119,9 @@ export class WebhookService {
     }
     if (push.repository !== app.repository) return json(400, { error: "repository_mismatch" });
     if (push.ref !== app.ref) return json(400, { error: "ref_mismatch" });
+    if (this.#deliveries.seen(appId, deliveryId)) {
+      return json(200, { status: "duplicate", app: appId, delivery: deliveryId });
+    }
 
     if (!this.#locks.acquire(appId)) {
       return json(
@@ -122,8 +134,10 @@ export class WebhookService {
       );
     }
 
+    this.#deliveries.remember(appId, deliveryId);
     const task = deploy(appId, app, push.commit, this.#deployDependencies)
       .catch((error) => {
+        this.#deliveries.forget(appId, deliveryId);
         this.#logger.error("deployment failed", {
           app: appId,
           commit: push.commit,

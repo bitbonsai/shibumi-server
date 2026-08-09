@@ -35,13 +35,18 @@ function payload(overrides: Record<string, unknown> = {}) {
   });
 }
 
-function request(body: string, event = "push", signatureSecret = secret): Request {
+let deliverySequence = 0;
+
+function request(body: string, event = "push", signatureSecret = secret, deliveryId?: string): Request {
   const signature = createHmac("sha256", signatureSecret).update(body).digest("hex");
+  deliverySequence += 1;
+  const delivery = deliveryId ?? `00000000-0000-4000-8000-${String(deliverySequence).padStart(12, "0")}`;
   return new Request("https://example.com/hooks/github/myapp", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-github-event": event,
+      "x-github-delivery": delivery,
       "x-hub-signature-256": `sha256=${signature}`,
     },
     body,
@@ -49,7 +54,10 @@ function request(body: string, event = "push", signatureSecret = secret): Reques
 }
 
 class SuccessfulRunner implements CommandRunner {
+  calls = 0;
+
   async run(_command: string, args: string[], _options?: CommandOptions): Promise<CommandResult> {
+    this.calls += 1;
     if (args.includes("rev-parse")) return { exitCode: 0, stdout: `${commit}\n`, stderr: "" };
     return { exitCode: 0, stdout: "", stderr: "" };
   }
@@ -89,6 +97,17 @@ describe("webhook server", () => {
     expect(await response.json()).toEqual({ ok: true });
   });
 
+  test("rejects missing or malformed authentication headers", async () => {
+    const unsigned = new Request("https://example.com/hooks/github/myapp", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-github-event": "push" },
+      body: payload(),
+    });
+    expect((await service().handle(unsigned)).status).toBe(400);
+    expect((await service().handle(request(payload(), "push", "wrong-secret".repeat(3)))).status).toBe(401);
+    expect((await service().handle(request(payload(), "push", secret, "not-a-guid"))).status).toBe(400);
+  });
+
   test("rejects an invalid signature before payload handling", async () => {
     const response = await service().handle(request(payload(), "push", "wrong-secret".repeat(3)));
     expect(response.status).toBe(401);
@@ -103,6 +122,38 @@ describe("webhook server", () => {
     const body = JSON.stringify({ padding: "x".repeat(2_000) });
     const response = await service().handle(request(body));
     expect(response.status).toBe(413);
+  });
+
+  test("acknowledges a replayed valid delivery without deploying twice", async () => {
+    const runner = new SuccessfulRunner();
+    const receiver = service(runner);
+    const delivery = "72d3162e-cc78-11e3-81ab-4c9367dc0958";
+
+    expect((await receiver.handle(request(payload(), "push", secret, delivery))).status).toBe(202);
+    await receiver.waitForIdle();
+    const replay = await receiver.handle(request(payload(), "push", secret, delivery));
+
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual({ status: "duplicate", app: "myapp", delivery });
+    expect(runner.calls).toBe(7);
+  });
+
+  test("allows a failed delivery to be retried", async () => {
+    class FailingRunner extends SuccessfulRunner {
+      override async run(_command: string, _args: string[], _options?: CommandOptions): Promise<CommandResult> {
+        this.calls += 1;
+        return { exitCode: 1, stdout: "", stderr: "failed" };
+      }
+    }
+    const runner = new FailingRunner();
+    const receiver = service(runner);
+    const delivery = "82d3162e-cc78-11e3-81ab-4c9367dc0958";
+
+    expect((await receiver.handle(request(payload(), "push", secret, delivery))).status).toBe(202);
+    await receiver.waitForIdle();
+    expect((await receiver.handle(request(payload(), "push", secret, delivery))).status).toBe(202);
+    await receiver.waitForIdle();
+    expect(runner.calls).toBe(2);
   });
 
   test("returns 409 while the same app is deploying", async () => {

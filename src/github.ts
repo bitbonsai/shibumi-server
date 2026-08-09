@@ -7,7 +7,16 @@ export interface GitHubPush {
 }
 
 const SIGNATURE = /^sha256=([0-9a-f]{64})$/;
+const DELIVERY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const COMMIT = /^[0-9a-f]{40}$/;
+
+export function isGitHubSignature(value: string | null): boolean {
+  return value !== null && SIGNATURE.test(value);
+}
+
+export function normalizeGitHubDeliveryId(value: string | null): string | undefined {
+  return value !== null && DELIVERY.test(value) ? value.toLowerCase() : undefined;
+}
 
 export function verifyGitHubSignature(secret: string, body: Uint8Array, signature: string | null): boolean {
   const match = signature?.match(SIGNATURE);

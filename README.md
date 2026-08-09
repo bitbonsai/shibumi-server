@@ -54,7 +54,9 @@ Configure one webhook per app:
 - SSL verification: enabled
 - Secret: a unique random value generated with `openssl rand -hex 32`
 
-The receiver verifies `X-Hub-Signature-256`, repository, branch, and full commit SHA. If the app is already deploying, it returns `409 Conflict`; deployments are not queued.
+The receiver rejects malformed event, delivery, and signature headers before reading the body, then verifies `X-Hub-Signature-256`, repository, branch, and full commit SHA. Active and successful `X-GitHub-Delivery` UUIDs are remembered in a bounded 24-hour replay cache; a duplicate is acknowledged without deploying again, while failed deliveries can be retried. If the app is already deploying for a different delivery, it returns `409 Conflict`; deployments are not queued.
+
+HMAC verification prevents fake requests from authorizing code, but it is not volumetric DDoS protection. Keep the listener on loopback and use Caddy, the host firewall, or an upstream provider to rate-limit the public webhook path. For stricter installations, allowlist GitHub's current `hooks` CIDRs from the [GitHub Meta API](https://api.github.com/meta) and automate updates so the list cannot silently go stale.
 
 ## Installation
 

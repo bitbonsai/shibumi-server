@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, test } from "bun:test";
-import { parseGitHubPush, verifyGitHubSignature } from "../src/github";
+import { isGitHubSignature, normalizeGitHubDeliveryId, parseGitHubPush, verifyGitHubSignature } from "../src/github";
 
 const secret = "a".repeat(32);
 const body = new TextEncoder().encode('{"ok":true}');
@@ -9,6 +9,18 @@ describe("GitHub webhook verification", () => {
   test("accepts a valid sha256 signature", () => {
     const signature = `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
     expect(verifyGitHubSignature(secret, body, signature)).toBe(true);
+  });
+
+  test("validates signature shape before body processing", () => {
+    expect(isGitHubSignature(`sha256=${"a".repeat(64)}`)).toBe(true);
+    expect(isGitHubSignature("sha256=short")).toBe(false);
+    expect(isGitHubSignature(null)).toBe(false);
+  });
+
+  test("normalizes GitHub delivery UUIDs", () => {
+    expect(normalizeGitHubDeliveryId("72D3162E-CC78-11E3-81AB-4C9367DC0958")).toBe("72d3162e-cc78-11e3-81ab-4c9367dc0958");
+    expect(normalizeGitHubDeliveryId("not-a-guid")).toBeUndefined();
+    expect(normalizeGitHubDeliveryId(null)).toBeUndefined();
   });
 
   test("rejects missing, malformed, and mismatched signatures", () => {

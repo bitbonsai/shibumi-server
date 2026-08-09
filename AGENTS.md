@@ -23,8 +23,8 @@ Use `SHIBUMI_COMPOSE_COMMAND=podman-compose` on hosts with the standalone Compos
 
 ## Security invariants
 
-- Verify `X-Hub-Signature-256` over the raw request body before parsing payload data.
-- Compare signatures in constant time.
+- Reject malformed event, delivery UUID, and signature headers before reading the request body; verify `X-Hub-Signature-256` over the raw body before parsing payload data.
+- Compare signatures in constant time and preserve bounded replay protection for accepted `X-GitHub-Delivery` IDs.
 - Match repository and exact branch against machine-local configuration.
 - Accept only full lowercase 40-character commit SHAs.
 - Never interpolate payload or config values into a shell command; use argument arrays.
