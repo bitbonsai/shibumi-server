@@ -1,0 +1,17 @@
+[Unit]
+Description=Shibumi webhook deploy service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/shibumi-server
+EnvironmentFile=%h/.config/shibumi-server/secrets.env
+ExecStart=%h/.bun/bin/bun %h/.local/share/shibumi-server/src/cli.ts serve --config %h/.config/shibumi-server/config.json
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,10 @@
+# Route the signed webhook endpoint before the app's normal handler.
+example.com {
+	handle /hooks/github/* {
+		reverse_proxy 127.0.0.1:8787
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:9100
+	}
+}

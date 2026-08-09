@@ -1,0 +1,24 @@
+{
+  "listen": {
+    "hostname": "127.0.0.1",
+    "port": 8787,
+    "maxBodyBytes": 1048576
+  },
+  "apps": {
+    "myapp": {
+      "repository": "owner/repository",
+      "ref": "refs/heads/main",
+      "checkout": "/srv/shibumi/apps/myapp",
+      "composeFile": "compose.yaml",
+      "composeCommand": ["podman", "compose"],
+      "composeProject": "myapp",
+      "service": "web",
+      "hostPort": 9100,
+      "testCommand": ["bun", "test"],
+      "healthUrl": "http://127.0.0.1:9100/healthz",
+      "secretEnvironmentVariable": "SHIBUMI_SECRET_MYAPP",
+      "healthAttempts": 20,
+      "healthIntervalMs": 500
+    }
+  }
+}
