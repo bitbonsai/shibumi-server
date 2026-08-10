@@ -66,7 +66,7 @@ The first release targets Linux with Bun, rootless Podman, Caddy, and a systemd 
 bunx shibumi-server@0.1.0
 ```
 
-The interactive setup asks for the domain, GitHub repository, deployment directory, local port, and test command. It installs the selected release locally, creates mode-restricted config and secret files, writes a resource-limited systemd user service, and registers the app. Restarts use the same installed release; upgrades are always explicit.
+Interactive setup first checks for Git, Caddy, rootless Podman, and a systemd user session, and lists anything that needs attention before making changes. It then asks for the domain, GitHub repository, deployment directory, local port, and test command. Setup installs the selected release locally, creates mode-restricted config and secret files, writes a resource-limited systemd user service, and registers the app. Restarts use the same installed release; upgrades are always explicit.
 
 For scripts and unattended setup, the two operations remain available separately:
 

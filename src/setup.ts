@@ -1,11 +1,52 @@
 import { cancel, confirm, intro, isCancel, outro, spinner, text } from "@clack/prompts";
 import { isAbsolute, join, resolve } from "node:path";
+import { BunCommandRunner, type CommandRunner } from "./deploy";
 import { addApp, initializeInstallation, installationPaths, type AddAppOptions } from "./install";
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 export type SetupAnswers = Omit<AddAppOptions, "home">;
+
+type WhichCommand = (command: string) => string | null;
+
+export async function setupRequirementIssues(
+  which: WhichCommand = (command) => Bun.which(command),
+  runner: CommandRunner = new BunCommandRunner(),
+): Promise<string[]> {
+  const requirements = [
+    { command: "git", label: "Git" },
+    { command: "podman", label: "Podman" },
+    { command: "caddy", label: "Caddy" },
+    { command: "systemctl", label: "systemd" },
+  ];
+  const available = new Set(requirements.filter(({ command }) => which(command)).map(({ command }) => command));
+  const issues = requirements
+    .filter(({ command }) => !available.has(command))
+    .map(({ label }) => `${label} is not installed`);
+
+  if (available.has("podman")) {
+    const result = await runner.run("podman", ["info", "--format", "{{.Host.Security.Rootless}}"], {
+      capture: true,
+      timeoutMs: 10_000,
+    });
+    if (result.timedOut || result.exitCode !== 0 || result.stdout.trim() !== "true") {
+      issues.push("Podman is not configured for the current user (rootless mode)");
+    }
+  }
+
+  if (available.has("systemctl")) {
+    const result = await runner.run("systemctl", ["--user", "show-environment"], {
+      capture: true,
+      timeoutMs: 10_000,
+    });
+    if (result.timedOut || result.exitCode !== 0) {
+      issues.push("a systemd user session is not available");
+    }
+  }
+
+  return issues;
+}
 
 export function parseCommandLine(input: string): string[] {
   const args: string[] = [];
@@ -73,8 +114,6 @@ function stopSetup(): undefined {
 }
 
 export async function promptForSetup(): Promise<SetupAnswers | undefined> {
-  intro("渋み  shibumi-server");
-
   const domain = await text({
     message: "Which domain will this app use?",
     placeholder: "example.com",
@@ -141,6 +180,13 @@ export async function runInteractiveSetup(options: {
   packageRoot: string;
   bunExecutable: string;
 }): Promise<void> {
+  intro("渋み  shibumi-server");
+  const issues = await setupRequirementIssues();
+  if (issues.length > 0) {
+    cancel(`Setup needs attention:\n${issues.map((issue) => `  • ${issue}`).join("\n")}\n\nInstall or configure these requirements, then run setup again.`);
+    return;
+  }
+
   const answers = await promptForSetup();
   if (!answers) return;
 
