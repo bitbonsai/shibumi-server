@@ -2,7 +2,7 @@
 
 Small, secure webhook deployments for a VPS running rootless Podman.
 
-> Experimental: the receiver and installer are implemented and being dogfooded. Release `0.1.0` is not published yet.
+> Experimental: release `0.1.0` is published and being dogfooded.
 
 ## How it works
 
@@ -60,7 +60,7 @@ HMAC verification prevents fake requests from authorizing code, but it is not vo
 
 ## Installation
 
-The first release targets Linux with Bun, Git, rootless Podman, Caddy, and a systemd user session. Once the package is published, log in to the VPS or homelab server as the deployment user and run:
+The first release targets Linux with Bun, Git, rootless Podman, Caddy, and a systemd user session. Log in to the VPS or homelab server as the deployment user and run:
 
 ```bash
 curl -fsSL https://shibumistack.dev/install/server | bash
