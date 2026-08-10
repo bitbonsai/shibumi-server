@@ -9,7 +9,7 @@ export type CliCommand =
       repository: string;
       checkout: string;
       hostPort: number;
-      testCommand: string[];
+      testCommand?: string[];
       ref?: string;
       composeFile?: string;
       composeCommand?: string[];
@@ -21,7 +21,7 @@ export const usageText = `Usage:
   shibumi-server                         Interactive setup
   shibumi-server setup                   Interactive setup
   shibumi-server init                    Install only (automation)
-  shibumi-server add <domain> --repository <owner/repo> --checkout <absolute-path> --port <port> [options] -- <test-command...>
+  shibumi-server add <domain> --repository <owner/repo> --checkout <absolute-path> --port <port> [options] [-- <test-command...>]
   shibumi-server check --config <path>
   shibumi-server serve --config <path>
 
@@ -78,10 +78,9 @@ export function parseCliArgs(argv: string[]): CliCommand {
 
   if (name === "add") {
     const separator = args.indexOf("--");
-    if (separator === -1) fail("add requires a test command after --");
-    const beforeCommand = args.slice(0, separator);
-    const testCommand = args.slice(separator + 1);
-    if (testCommand.length === 0) fail("test command after -- must not be empty");
+    const beforeCommand = separator === -1 ? [...args] : args.slice(0, separator);
+    const testCommand = separator === -1 ? undefined : args.slice(separator + 1);
+    if (testCommand?.length === 0) fail("test command after -- must not be empty");
     const domain = beforeCommand.shift();
     if (!domain || domain.startsWith("--")) fail("add requires a domain");
 

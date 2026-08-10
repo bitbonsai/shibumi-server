@@ -23,13 +23,15 @@ function config(overrides: Record<string, unknown> = {}) {
 }
 
 describe("configuration", () => {
-  test("applies safe defaults", () => {
+  test("applies safe defaults and allows app-owned tests to be omitted", () => {
     const parsed = parseConfig(config());
     expect(parsed.listen.maxBodyBytes).toBe(1_048_576);
     expect(parsed.apps.myapp.minimumFreeMemoryMb).toBe(2_048);
     expect(parsed.apps.myapp.minimumFreeDiskMb).toBe(4_096);
     expect(parsed.apps.myapp.buildTimeoutMs).toBe(600_000);
     expect(parsed.apps.myapp.healthAttempts).toBe(20);
+    expect(parseConfig(config({ testCommand: undefined })).apps.myapp.testCommand).toBeUndefined();
+    expect(() => parseConfig(config({ testCommand: [] }))).toThrow("non-empty array");
   });
 
   test("requires loopback listeners and health URLs", () => {

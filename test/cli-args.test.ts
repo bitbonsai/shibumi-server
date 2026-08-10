@@ -47,17 +47,16 @@ describe("CLI arguments", () => {
     });
   });
 
-  test("applies add defaults outside the parser", () => {
+  test("makes app-owned tests optional", () => {
     expect(parseCliArgs([
       "add", "example.com",
       "--repository", "owner/repo",
       "--checkout", "/srv/apps/example",
       "--port", "9100",
-      "--", "bun", "test",
     ])).toMatchObject({
       name: "add",
       composeCommand: undefined,
-      testCommand: ["bun", "test"],
+      testCommand: undefined,
     });
   });
 
@@ -78,6 +77,7 @@ describe("CLI arguments", () => {
       "--repository", "owner/repo",
       "--checkout", "/srv/app",
       "--port", "9100",
+      "--",
     ])).toThrow("test command");
   });
 });

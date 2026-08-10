@@ -31,10 +31,10 @@ Use `SHIBUMI_COMPOSE_COMMAND=podman-compose` on hosts with the standalone Compos
 - Keep the HTTP listener and app ports on loopback behind Caddy.
 - Keep webhook secrets, credentials, real machine config, and deployment state out of Git and npm packages.
 - Preserve the per-app lock: concurrent deployment requests return `409` and are not queued.
-- Failed preflights, fetches, builds, or tests must not run `compose up`.
+- Failed preflights, fetches, Compose validation, builds, or optional app tests must not run `compose up`.
 - Preserve host resource guards: preflight memory/disk floors, a cancellable build deadline, systemd ceilings, and per-app Compose limits.
 - The systemd unit must execute a pinned local package copy, never an unpinned `bunx` command. Init must preserve machine config/secrets; repeated app registration must not rotate secrets.
-- No-argument interactive setup checks Git, Caddy, rootless Podman, and the systemd user session before combining `init` and `add`; keep both explicit commands for automation. Parse prompted test commands into argument arrays without invoking a shell.
+- No-argument interactive setup checks Git, Caddy, rootless Podman, and the systemd user session before combining `init` and `add`; keep both explicit commands for automation. App-owned tests are optional and available only through explicit config/`add` arguments; never invoke them through a shell.
 - Dynamically import interactive prompt dependencies. The pinned service release does not include `node_modules`, so `serve` and `check` must start without resolving `@clack/prompts`.
 - Normal unit tests must fake Git, Podman, and systemd. Real integration tests must use unique disposable projects and clean up.
 

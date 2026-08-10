@@ -48,58 +48,6 @@ export async function setupRequirementIssues(
   return issues;
 }
 
-export function parseCommandLine(input: string): string[] {
-  const args: string[] = [];
-  let current = "";
-  let quote: "'" | '"' | undefined;
-  let started = false;
-
-  for (let index = 0; index < input.length; index += 1) {
-    const character = input[index];
-    if (character === "\0" || character === "\n" || character === "\r") {
-      throw new Error("command must stay on one line");
-    }
-    if (quote) {
-      if (character === quote) {
-        quote = undefined;
-      } else if (character === "\\" && quote === '"') {
-        index += 1;
-        if (index >= input.length) throw new Error("command ends with an escape");
-        current += input[index];
-      } else {
-        current += character;
-      }
-      started = true;
-      continue;
-    }
-    if (character === "'" || character === '"') {
-      quote = character;
-      started = true;
-    } else if (character === "\\") {
-      index += 1;
-      if (index >= input.length) throw new Error("command ends with an escape");
-      current += input[index];
-      started = true;
-    } else if (/\s/.test(character)) {
-      if (started) {
-        args.push(current);
-        current = "";
-        started = false;
-      }
-    } else {
-      current += character;
-      started = true;
-    }
-  }
-
-  if (quote) throw new Error("command has an unterminated quote");
-  if (started) args.push(current);
-  if (args.length === 0 || args.some((part) => part.length === 0)) {
-    throw new Error("command must contain at least one non-empty argument");
-  }
-  return args;
-}
-
 export function defaultCheckout(domain: string): string {
   return join("/srv/shibumi/apps", domain.replaceAll(".", "-"));
 }
@@ -147,19 +95,6 @@ export async function promptForSetup(): Promise<SetupAnswers | undefined> {
   });
   if (cancelled(port)) return stopSetup();
 
-  const testCommand = await text({
-    message: "Which test command should run before deploy?",
-    defaultValue: "bun test",
-    validate: (value) => {
-      try {
-        parseCommandLine(value);
-      } catch (error) {
-        return error instanceof Error ? error.message : "Use a valid command";
-      }
-    },
-  });
-  if (cancelled(testCommand)) return stopSetup();
-
   const accepted = await confirm({
     message: `Install shibumi-server and add ${domain}?`,
     initialValue: true,
@@ -171,7 +106,6 @@ export async function promptForSetup(): Promise<SetupAnswers | undefined> {
     repository,
     checkout,
     hostPort: Number(port),
-    testCommand: parseCommandLine(testCommand),
   };
 }
 

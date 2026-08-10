@@ -6,7 +6,7 @@ Small, secure webhook deployments for a VPS running rootless Podman.
 
 ## How it works
 
-A signed GitHub push webhook causes `shibumi-server` to fetch the exact commit, build and test it locally, start it with Podman Compose, and check its local health endpoint. Caddy remains the public HTTPS server.
+A signed GitHub push webhook causes `shibumi-server` to fetch the exact commit, validate the Compose config, build it locally, start it with Podman Compose, and check its local health endpoint. Projects can optionally run their own test command before startup. Caddy remains the public HTTPS server.
 
 ```text
 GitHub → Caddy → shibumi-server → Git → rootless Podman → health check
@@ -66,7 +66,7 @@ The first release targets Linux with Bun, rootless Podman, Caddy, and a systemd 
 bunx shibumi-server@0.1.0
 ```
 
-Interactive setup first checks for Git, Caddy, rootless Podman, and a systemd user session, and lists anything that needs attention before making changes. It then asks for the domain, GitHub repository, deployment directory, local port, and test command. Setup installs the selected release locally, creates mode-restricted config and secret files, writes a resource-limited systemd user service, and registers the app. Restarts use the same installed release; upgrades are always explicit.
+Interactive setup first checks for Git, Caddy, rootless Podman, and a systemd user session, and lists anything that needs attention before making changes. It then asks for the domain, GitHub repository, deployment directory, and local port. Setup installs the selected release locally, creates mode-restricted config and secret files, writes a resource-limited systemd user service, and registers the app. Restarts use the same installed release; upgrades are always explicit.
 
 For scripts and unattended setup, the two operations remain available separately:
 
@@ -75,11 +75,10 @@ bunx shibumi-server@0.1.0 init
 bunx shibumi-server@0.1.0 add example.com \
   --repository owner/repository \
   --checkout /srv/shibumi/apps/example-com \
-  --port 9100 \
-  -- bun test
+  --port 9100
 ```
 
-`init` stores the release under `~/.local/share/shibumi-server/releases/0.1.0`, updates the local `current` symlink, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config and stores everything after `--` as a test-command argument array, never a shell string.
+`init` stores the release under `~/.local/share/shibumi-server/releases/0.1.0`, updates the local `current` symlink, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
 
 Hosts with the standalone Compose frontend add `--compose-command podman-compose`. Optional flags configure the branch ref, Compose file and service, and health path; run `bunx shibumi-server@0.1.0 --help` for the full syntax.
 

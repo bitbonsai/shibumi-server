@@ -47,7 +47,6 @@ function appOptions(home: string, overrides: Record<string, unknown> = {}) {
     repository: "owner/repository",
     checkout: "/srv/shibumi/apps/example-com",
     hostPort: 9_100,
-    testCommand: ["bun", "test"],
     ...overrides,
   } as Parameters<typeof addApp>[0];
 }
@@ -114,7 +113,10 @@ describe("app registration", () => {
   test("adds a validated app, generates one secret, and starts the service", async () => {
     const home = await temporaryHome();
     const { services } = await initialized(home);
-    const result = await addApp(appOptions(home, { composeCommand: ["podman-compose"] }), services);
+    const result = await addApp(appOptions(home, {
+      composeCommand: ["podman-compose"],
+      testCommand: ["bun", "test"],
+    }), services);
     const paths = installationPaths(home);
 
     expect(result.appId).toBe("example-com");

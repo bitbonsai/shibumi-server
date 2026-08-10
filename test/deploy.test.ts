@@ -62,12 +62,42 @@ describe("deployment pipeline", () => {
       ["git", "-C", app.checkout, "fetch", "--prune", "origin", app.ref],
       ["git", "-C", app.checkout, "rev-parse", "FETCH_HEAD"],
       ["git", "-C", app.checkout, "reset", "--hard", commit],
+      ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "config", "--quiet"],
       ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "build"],
       ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "run", "--rm", "web", "bun", "test"],
       ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "up", "-d", "--remove-orphans"],
     ]);
     expect(runner.calls.at(-1)?.options?.env).toEqual({ SHIBUMI_PORT: "9100" });
     expect(runner.calls.find(({ args }) => args.at(-1) === "build")?.options?.timeoutMs).toBe(600_000);
+  });
+
+  test("always validates Compose and allows app-owned tests to be omitted", async () => {
+    const runner = new FakeRunner();
+    runner.responses = [
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${commit}\n`, stderr: "" },
+    ];
+
+    await deploy("myapp", { ...app, testCommand: undefined }, commit, dependencies(runner));
+
+    expect(runner.calls.some(({ args }) => args.includes("config") && args.includes("--quiet"))).toBe(true);
+    expect(runner.calls.some(({ args }) => args.includes("run"))).toBe(false);
+    expect(runner.calls.some(({ args }) => args.includes("up"))).toBe(true);
+  });
+
+  test("stops before building when the Compose config is invalid", async () => {
+    const runner = new FakeRunner();
+    runner.responses = [
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${commit}\n`, stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 1, stdout: "", stderr: "invalid compose" },
+    ];
+
+    await expect(deploy("myapp", app, commit, dependencies(runner))).rejects.toThrow("config failed: invalid compose");
+    expect(runner.calls.some(({ args }) => args.includes("build"))).toBe(false);
   });
 
   test("refuses to deploy when available memory is below the configured floor", async () => {
@@ -119,6 +149,7 @@ describe("deployment pipeline", () => {
       { exitCode: 0, stdout: "", stderr: "" },
       { exitCode: 0, stdout: `${commit}\n`, stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
       { exitCode: 1, stdout: "", stderr: "broken build" },
     ];
     await expect(deploy("myapp", app, commit, dependencies(runner))).rejects.toEqual(
@@ -134,6 +165,7 @@ describe("deployment pipeline", () => {
       { exitCode: 0, stdout: "", stderr: "" },
       { exitCode: 0, stdout: `${commit}\n`, stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
       { exitCode: 137, stdout: "", stderr: "", timedOut: true },
     ];
     await expect(deploy("myapp", app, commit, dependencies(runner))).rejects.toEqual(
@@ -148,6 +180,7 @@ describe("deployment pipeline", () => {
       { exitCode: 0, stdout: "", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
       { exitCode: 0, stdout: `${commit}\n`, stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
       { exitCode: 1, stdout: "", stderr: "failed tests" },

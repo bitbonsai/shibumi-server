@@ -30,7 +30,7 @@ export interface AddAppOptions {
   repository: string;
   checkout: string;
   hostPort: number;
-  testCommand: string[];
+  testCommand?: string[];
   ref?: string;
   composeFile?: string;
   composeCommand?: string[];
@@ -213,7 +213,7 @@ export async function addApp(
   }
   if (!Number.isInteger(options.hostPort)) throw new Error("port must be an integer");
   if (!isAbsolute(options.checkout)) throw new Error("checkout must be an absolute path");
-  if (options.testCommand.length === 0) throw new Error("test command must not be empty");
+  if (options.testCommand?.length === 0) throw new Error("test command must not be empty");
   const healthPath = options.healthPath ?? "/healthz";
   if (!/^\/(?!\/)[^?#\0]*$/.test(healthPath)) {
     throw new Error("health path must be an absolute path without a query or fragment");

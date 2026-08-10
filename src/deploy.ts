@@ -212,6 +212,7 @@ export async function deploy(appId: string, app: AppConfig, commit: string, depe
   ];
   const options: CommandOptions = { env: { SHIBUMI_PORT: String(app.hostPort) } };
 
+  await runChecked(dependencies, "config", composeExecutable, [...compose, "config", "--quiet"], options);
   await runChecked(
     dependencies,
     "build",
@@ -219,13 +220,15 @@ export async function deploy(appId: string, app: AppConfig, commit: string, depe
     [...compose, "build"],
     { ...options, timeoutMs: app.buildTimeoutMs },
   );
-  await runChecked(
-    dependencies,
-    "test",
-    composeExecutable,
-    [...compose, "run", "--rm", app.service, ...app.testCommand],
-    options,
-  );
+  if (app.testCommand) {
+    await runChecked(
+      dependencies,
+      "test",
+      composeExecutable,
+      [...compose, "run", "--rm", app.service, ...app.testCommand],
+      options,
+    );
+  }
   await runChecked(dependencies, "start", composeExecutable, [...compose, "up", "-d", "--remove-orphans"], options);
   await waitForHealth(app, dependencies);
 

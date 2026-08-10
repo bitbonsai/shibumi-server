@@ -14,7 +14,6 @@
       "composeProject": "myapp",
       "service": "web",
       "hostPort": 9100,
-      "testCommand": ["bun", "test"],
       "healthUrl": "http://127.0.0.1:9100/healthz",
       "secretEnvironmentVariable": "SHIBUMI_SECRET_MYAPP",
       "minimumFreeMemoryMb": 2048,

@@ -15,7 +15,7 @@ export interface AppConfig {
   composeProject: string;
   service: string;
   hostPort: number;
-  testCommand: string[];
+  testCommand?: string[];
   healthUrl: string;
   secretEnvironmentVariable: string;
   minimumFreeMemoryMb: number;
@@ -148,7 +148,9 @@ export function parseConfig(value: unknown): ServerConfig {
       composeProject: identifier(appValue.composeProject, `apps.${appId}.composeProject`),
       service: identifier(appValue.service, `apps.${appId}.service`),
       hostPort,
-      testCommand: command(appValue.testCommand, `apps.${appId}.testCommand`),
+      testCommand: appValue.testCommand === undefined
+        ? undefined
+        : command(appValue.testCommand, `apps.${appId}.testCommand`),
       healthUrl,
       secretEnvironmentVariable,
       minimumFreeMemoryMb: integer(

@@ -10,7 +10,8 @@ Git push
   → Caddy proxies the webhook path to localhost
   → shibumi-server verifies the signature, repository, and branch
   → shibumi-server fetches the exact commit
-  → Podman builds and tests the application
+  → Podman validates and builds the application
+  → optional app-owned tests run in a temporary container
   → Podman replaces the application container
   → shibumi-server checks the local health endpoint
 ```
@@ -21,7 +22,7 @@ The receiver listens on a loopback address. Caddy is the only public HTTP server
 
 A valid webhook authorizes repository code to build and run as the deployment Unix user. Use a dedicated unprivileged account and rootless Podman. Do not give that account access to unrelated applications.
 
-The receiver never executes command text from the webhook. Repository, branch, checkout, Compose service, test command, and port all come from local configuration. Webhook values are compared against that configuration and commands are executed as argument arrays without a shell.
+The receiver never executes command text from the webhook. Repository, branch, checkout, Compose service, optional test command, and port all come from local configuration. Webhook values are compared against that configuration and commands are executed as argument arrays without a shell.
 
 ## Request validation
 
@@ -57,7 +58,7 @@ The fetched commit must exactly match the signed webhook payload. Runtime data a
 
 Before changing the checkout or starting a build, the receiver checks Linux `MemAvailable` and free space on the checkout filesystem. The default per-app floors are 2 GiB of available memory and 4 GiB of disk. If either cannot be measured or is below its configured floor, deployment stops at the `preflight` stage. Put the checkout and rootless Podman storage on the same filesystem; otherwise the disk check does not cover image storage.
 
-Compose builds have a configurable deadline, 10 minutes by default. The receiver starts each command in its own process group, sends `SIGKILL` to the build group when it exceeds the deadline, and never proceeds to tests or startup. This bounds a stuck build, but a killed build may leave intermediate Podman data for an operator to inspect and prune deliberately.
+Compose builds have a configurable deadline, 10 minutes by default. The receiver starts each command in its own process group, sends `SIGKILL` to the build group when it exceeds the deadline, and never proceeds to optional tests or startup. This bounds a stuck build, but a killed build may leave intermediate Podman data for an operator to inspect and prune deliberately.
 
 The shipped systemd unit adds cgroup ceilings for the receiver and direct child processes:
 
@@ -109,6 +110,6 @@ Never commit webhook secrets, application keys, repository credentials, registry
 
 The first release targets Bun and a systemd user service. `bunx shibumi-server@<version> init` copies the exact invoked package into a versioned release directory, atomically updates a local `current` symlink, creates mode-`0600` config and secret files, and writes the user unit. The unit executes that local copy and never downloads through `bunx` during startup or restart. Re-running `init` preserves machine-owned files and lets an active service move to the newly invoked version.
 
-`add <domain>` requires an explicit repository, absolute checkout, host port, and test command. The domain becomes a safe app ID; the rest of the deployment values come only from flags and safe defaults. Registration validates the complete config before writing it, creates a different random 32-byte HMAC secret for each app, and restarts the service. Repeating the same registration is idempotent and does not rotate the secret; conflicting settings fail closed.
+`add <domain>` requires an explicit repository, absolute checkout, and host port. An app-owned test command is optional. The domain becomes a safe app ID; the rest of the deployment values come only from flags and safe defaults. Registration validates the complete config before writing it, creates a different random 32-byte HMAC secret for each app, and restarts the service. Repeating the same registration is idempotent and does not rotate the secret; conflicting settings fail closed.
 
 The installer does not clone repositories, allocate ports, edit Caddy, call GitHub, or print secret values. Those boundaries keep source credentials and public routing under operator control. Caddy API automation, automatic port allocation, immutable-image rollback, deployment queues, GitHub commit statuses, GHCR, and Node/`npx` compatibility are later work.
