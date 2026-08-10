@@ -18,6 +18,7 @@
     "src",
     "docs",
     "examples",
+    "install.sh",
     "README.md",
     "LICENSE"
   ],

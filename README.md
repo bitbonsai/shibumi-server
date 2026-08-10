@@ -60,13 +60,13 @@ HMAC verification prevents fake requests from authorizing code, but it is not vo
 
 ## Installation
 
-The first release targets Linux with Bun, rootless Podman, Caddy, and a systemd user session. Once the package is published, log in to the VPS or homelab server and run:
+The first release targets Linux with Bun, Git, rootless Podman, Caddy, and a systemd user session. Once the package is published, log in to the VPS or homelab server as the deployment user and run:
 
 ```bash
-bunx shibumi-server@latest
+curl -fsSL https://shibumistack.dev/install/server | bash
 ```
 
-Interactive installation checks for Git, Caddy, rootless Podman, and a systemd user session before making changes. It copies the resolved release locally, creates mode-restricted config and secret files, writes a resource-limited systemd user service, and installs `shibumi-server` in `~/.local/bin`. The service stays pinned to that local release until you run an explicit upgrade. Make sure `~/.local/bin` is on `PATH`.
+The Bash bootstrap installs Bun when needed, then runs interactive setup. Setup checks Git, Caddy, rootless Podman, and the systemd user session before changing server configuration. It copies the resolved release locally, creates mode-restricted config and secret files, writes a resource-limited systemd user service, and installs `shibumi-server` in `~/.local/bin`. The service stays pinned to that local release until you run an explicit upgrade. Make sure `~/.local/bin` is on `PATH`.
 
 Add the first app, or another one later, with the installed command:
 
