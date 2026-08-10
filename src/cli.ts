@@ -7,6 +7,7 @@ import { parseCliArgs, usageText } from "./cli-args";
 import { loadConfig, validateSecrets } from "./config";
 import { addApp, initializeInstallation, installationPaths, uninstallInstallation } from "./install";
 import { WebhookService } from "./server";
+import { warnIfUpdateAvailable } from "./update";
 
 function requireLinux(): void {
   if (process.platform !== "linux") throw new Error("init and add require Linux with a systemd user session");
@@ -36,6 +37,9 @@ async function serve(configPath: string): Promise<void> {
 
 try {
   const command = parseCliArgs(process.argv.slice(2));
+  if (command.name !== "serve" && process.env.SHIBUMI_SKIP_UPDATE_CHECK !== "1") {
+    await warnIfUpdateAvailable(packageJson.version);
+  }
 
   if (command.name === "help") {
     console.log(usageText);
@@ -81,11 +85,20 @@ try {
         hostPort: options.hostPort,
       });
       const paths = installationPaths(homedir());
-      console.log(`Added ${result.appId} and restarted shibumi-server.`);
-      console.log(`Webhook URL: https://${options.domain}/hooks/github/${result.appId}`);
-      console.log(`Webhook secret: ${result.secretEnvironmentVariable} in ${paths.secrets}`);
-      console.log(`Caddy upstream: 127.0.0.1:${options.hostPort}`);
-      console.log("Add the webhook route to Caddy before the app's normal handler; Caddy and GitHub are not modified automatically.");
+      if (options.dryRun) {
+        console.log(`Preview for ${result.appId}:`);
+        console.log(`Checkout: ${options.checkout}`);
+        console.log(`Webhook URL: https://${options.domain}/hooks/github/${result.appId}`);
+        console.log(`Webhook secret variable: ${result.secretEnvironmentVariable}`);
+        console.log(`Caddy upstream: 127.0.0.1:${options.hostPort}`);
+        console.log("Preview complete. No changes made.");
+      } else {
+        console.log(`Added ${result.appId} and restarted shibumi-server.`);
+        console.log(`Webhook URL: https://${options.domain}/hooks/github/${result.appId}`);
+        console.log(`Webhook secret: ${result.secretEnvironmentVariable} in ${paths.secrets}`);
+        console.log(`Caddy upstream: 127.0.0.1:${options.hostPort}`);
+        console.log("Add the webhook route to Caddy before the app's normal handler; Caddy and GitHub are not modified automatically.");
+      }
     } else {
       const { runInteractiveAdd } = await import("./setup");
       await runInteractiveAdd({ home: homedir(), ...options });

@@ -44,6 +44,7 @@ describe("CLI arguments", () => {
     ])).toEqual({
       name: "add",
       domain: "example.com",
+      dryRun: false,
       repository: "owner/repo",
       checkout: "/srv/apps/example",
       hostPort: 9100,
@@ -56,10 +57,11 @@ describe("CLI arguments", () => {
     });
   });
 
-  test("allows interactive app registration with only a domain", () => {
-    expect(parseCliArgs(["add", "sub.example.com"])).toMatchObject({
+  test("allows interactive app registration and dry-run previews", () => {
+    expect(parseCliArgs(["add", "sub.example.com", "--dry-run"])).toMatchObject({
       name: "add",
       domain: "sub.example.com",
+      dryRun: true,
       repository: undefined,
       checkout: undefined,
       hostPort: undefined,
@@ -87,6 +89,7 @@ describe("CLI arguments", () => {
     expect(() => parseCliArgs(["uninstall", "--purge", "--purge"])).toThrow("only be used once");
     expect(() => parseCliArgs(["check"])).toThrow("--config");
     expect(() => parseCliArgs(["check", "--config", "a", "--config", "b"])).toThrow("only be used once");
+    expect(() => parseCliArgs(["add", "example.com", "--dry-run", "--dry-run"])).toThrow("only be used once");
     expect(() => parseCliArgs([
       "add", "example.com",
       "--repository", "owner/repo",

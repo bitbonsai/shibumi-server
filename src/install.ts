@@ -30,6 +30,7 @@ export interface AddAppOptions {
   home: string;
   domain: string;
   repository: string;
+  dryRun?: boolean;
   checkout: string;
   hostPort: number;
   testCommand?: string[];
@@ -311,7 +312,10 @@ export async function addApp(
   if (existing !== undefined) {
     const existingConfig = parseConfig(root).apps[appId];
     if (!sameApp(existingConfig, parsed.apps[appId])) throw new Error(`app ${appId} already exists with different settings`);
-  } else {
+  }
+  if (options.dryRun) return { appId, secretEnvironmentVariable, config: parsed };
+
+  if (existing === undefined) {
     const secrets = await readFile(paths.secrets, "utf8");
     const existingSecret = new RegExp(`^${secretEnvironmentVariable}=([^\\r\\n]*)$`, "m").exec(secrets)?.[1];
     if (existingSecret !== undefined && !/^[a-f0-9]{64}$/.test(existingSecret)) {

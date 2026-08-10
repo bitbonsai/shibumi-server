@@ -8,6 +8,7 @@ export type CliCommand =
   | {
       name: "add";
       domain: string;
+      dryRun: boolean;
       repository?: string;
       checkout?: string;
       hostPort?: number;
@@ -26,12 +27,13 @@ export const usageText = `Usage:
   shibumi-server setup                   Interactive installation
   shibumi-server init                    Install only (automation)
   shibumi-server uninstall [--purge [--yes]]
-  shibumi-server add <domain>             Add an app interactively
-  shibumi-server add <domain> --repository <github:owner/repo> --checkout <absolute-path> --port <port> [options] [-- <test-command...>]
+  shibumi-server add <domain> [--dry-run] Add or preview an app interactively
+  shibumi-server add <domain> --repository <github:owner/repo> --checkout <absolute-path> --port <port> [--dry-run] [options] [-- <test-command...>]
   shibumi-server check --config <path>
   shibumi-server serve --config <path>
 
 Add options:
+  --dry-run                          Preview validated settings without changing the system
   --ref <refs/heads/main>             Git branch ref (default: refs/heads/main)
   --compose-file <path>               Compose file inside checkout (default: compose.yaml)
   --compose-command <frontend>        podman or podman-compose (default: podman)
@@ -101,8 +103,11 @@ export function parseCliArgs(argv: string[]): CliCommand {
     if (testCommand?.length === 0) fail("test command after -- must not be empty");
     const domain = beforeCommand.shift();
     if (!domain || domain.startsWith("--")) fail("add requires a domain");
+    const dryRunCount = beforeCommand.filter((arg) => arg === "--dry-run").length;
+    if (dryRunCount > 1) fail("option may only be used once: --dry-run");
+    const dryRun = dryRunCount === 1;
 
-    const values = optionValues(beforeCommand, new Set([
+    const values = optionValues(beforeCommand.filter((arg) => arg !== "--dry-run"), new Set([
       "--repository",
       "--checkout",
       "--port",
@@ -122,6 +127,7 @@ export function parseCliArgs(argv: string[]): CliCommand {
     return {
       name,
       domain,
+      dryRun,
       repository: values.get("--repository")?.replace(/^github:/, ""),
       checkout: values.get("--checkout"),
       hostPort: portValue === undefined ? undefined : Number(portValue),

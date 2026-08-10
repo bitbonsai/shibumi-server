@@ -91,7 +91,7 @@ describe("pinned installation", () => {
     const check = Bun.spawn([
       paths.launcher,
       "--help",
-    ], { cwd: paths.currentRelease, env: { PATH: "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe" });
+    ], { cwd: paths.currentRelease, env: { PATH: "/usr/bin:/bin", SHIBUMI_SKIP_UPDATE_CHECK: "1" }, stdout: "pipe", stderr: "pipe" });
     const [checkExit, checkStdout, checkStderr] = await Promise.all([
       check.exited,
       new Response(check.stdout).text(),
@@ -181,6 +181,22 @@ describe("app registration", () => {
     expect((await stat(paths.config)).mode & 0o777).toBe(0o600);
     expect((await stat(paths.secrets)).mode & 0o777).toBe(0o600);
     expect(services.restarts).toBe(1);
+  });
+
+  test("previews the complete app without changing config, secrets, or systemd", async () => {
+    const home = await temporaryHome();
+    const { services } = await initialized(home);
+    const paths = installationPaths(home);
+    const configBefore = await readFile(paths.config, "utf8");
+    const secretsBefore = await readFile(paths.secrets, "utf8");
+
+    const result = await addApp(appOptions(home, { dryRun: true }), services);
+
+    expect(result.appId).toBe("example-com");
+    expect(result.config.apps["example-com"].hostPort).toBe(9_100);
+    expect(await readFile(paths.config, "utf8")).toBe(configBefore);
+    expect(await readFile(paths.secrets, "utf8")).toBe(secretsBefore);
+    expect(services.restarts).toBe(0);
   });
 
   test("is idempotent for the same app and does not rotate its secret", async () => {

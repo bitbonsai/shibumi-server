@@ -163,7 +163,9 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}): Promise
   if (cancelled(port)) return stopSetup();
 
   const accepted = await confirm({
-    message: `Add ${domain} to shibumi-server?`,
+    message: initial.dryRun
+      ? `Preview ${domain} without making changes?`
+      : `Add ${domain} to shibumi-server?`,
     initialValue: true,
   });
   if (cancelled(accepted) || !accepted) return stopSetup();
@@ -236,19 +238,27 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
   const answers = await promptForApp({ ...initial, hostPort });
   if (!answers) return;
 
+  const action = answers.dryRun ? "preview" : "add";
   const progress = spinner();
-  progress.start(`Adding ${answers.domain}`);
+  progress.start(`${answers.dryRun ? "Previewing" : "Adding"} ${answers.domain}`);
   let app;
   try {
     app = await addApp({ home, ...answers });
-    progress.stop(`Added ${answers.domain}`);
+    progress.stop(`${answers.dryRun ? "Previewed" : "Added"} ${answers.domain}`);
   } catch (error) {
-    progress.stop(`Failed to add ${answers.domain}`, 1);
+    progress.stop(`Failed to ${action} ${answers.domain}`, 1);
     throw error;
   }
 
   const paths = installationPaths(home);
-  outro([
+  outro(answers.dryRun ? [
+    `App ID: ${app.appId}`,
+    `Checkout: ${answers.checkout}`,
+    `Webhook URL: https://${answers.domain}/hooks/github/${app.appId}`,
+    `Webhook secret variable: ${app.secretEnvironmentVariable}`,
+    `Caddy upstream: 127.0.0.1:${answers.hostPort}`,
+    "Preview complete. No changes made.",
+  ].join("\n") : [
     `Webhook URL: https://${answers.domain}/hooks/github/${app.appId}`,
     `Webhook secret: ${app.secretEnvironmentVariable} in ${paths.secrets}`,
     `Caddy upstream: 127.0.0.1:${answers.hostPort}`,

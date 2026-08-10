@@ -4,6 +4,7 @@ import packageJson from "../package.json";
 
 async function cli(args: string[]) {
   const subprocess = Bun.spawn([process.execPath, join(import.meta.dir, "..", "src", "cli.ts"), ...args], {
+    env: { ...process.env, SHIBUMI_SKIP_UPDATE_CHECK: "1" },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -23,6 +24,7 @@ test("CLI help documents interactive installation, pinned installation, and app 
   expect(result.stdout).toContain("shibumi-server init");
   expect(result.stdout).toContain("shibumi-server uninstall");
   expect(result.stdout).toContain("shibumi-server add <domain>");
+  expect(result.stdout).toContain("--dry-run");
   expect(result.stderr).toBe("");
 });
 
