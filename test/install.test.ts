@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { addApp, initializeInstallation, installationPaths, SystemdUserServiceManager, type ServiceManager } from "../src/install";
+import { addApp, initializeInstallation, installationPaths, SystemdUserServiceManager, uninstallInstallation, type ServiceManager } from "../src/install";
+import packageJson from "../package.json";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
 
 const roots: string[] = [];
@@ -20,14 +21,24 @@ afterEach(async () => {
 
 class FakeServices implements ServiceManager {
   reloads = 0;
+  unitReloads = 0;
   restarts = 0;
+  stops = 0;
 
   async reload(): Promise<void> {
     this.reloads += 1;
   }
 
+  async reloadUnits(): Promise<void> {
+    this.unitReloads += 1;
+  }
+
   async enableAndRestart(): Promise<void> {
     this.restarts += 1;
+  }
+
+  async disableAndStop(): Promise<void> {
+    this.stops += 1;
   }
 }
 
@@ -35,7 +46,7 @@ async function initialized(home: string, services = new FakeServices()) {
   const result = await initializeInstallation({
     home,
     packageRoot,
-    bunExecutable: "/home/example/.bun/bin/bun",
+    bunExecutable: process.execPath,
   }, services);
   return { result, services };
 }
@@ -57,9 +68,11 @@ describe("pinned installation", () => {
     const { result, services } = await initialized(home);
     const paths = installationPaths(home);
 
-    expect(result.version).toBe("0.1.0");
-    expect(await readlink(paths.currentRelease)).toBe("releases/0.1.0");
-    expect(await readlink(paths.launcher)).toBe("../share/shibumi-server/current/src/cli.ts");
+    expect(result.version).toBe(packageJson.version);
+    expect(await readlink(paths.currentRelease)).toBe(`releases/${packageJson.version}`);
+    const launcher = await readFile(paths.launcher, "utf8");
+    expect(launcher).toContain(`exec '${process.execPath}'`);
+    expect((await stat(paths.launcher)).mode & 0o777).toBe(0o755);
     expect(await readFile(join(paths.currentRelease, "src", "cli.ts"), "utf8")).toContain("initializeInstallation");
     expect(JSON.parse(await readFile(paths.config, "utf8"))).toEqual({
       listen: { hostname: "127.0.0.1", port: 8787, maxBodyBytes: 1_048_576 },
@@ -69,15 +82,16 @@ describe("pinned installation", () => {
     expect((await stat(paths.secrets)).mode & 0o777).toBe(0o600);
 
     const unit = await readFile(paths.service, "utf8");
-    expect(unit).toContain(`WorkingDirectory="${paths.currentRelease}"`);
-    expect(unit).toContain('ExecStart="/home/example/.bun/bin/bun"');
+    expect(unit).toContain(`WorkingDirectory=${paths.currentRelease}`);
+    expect(unit).not.toContain('WorkingDirectory="');
+    expect(unit).toContain(`ExecStart="${process.execPath}"`);
     expect(unit).toContain("MemoryMax=1536M");
     expect(unit).not.toContain("bunx");
 
     const check = Bun.spawn([
       paths.launcher,
       "--help",
-    ], { cwd: paths.currentRelease, stdout: "pipe", stderr: "pipe" });
+    ], { cwd: paths.currentRelease, env: { PATH: "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe" });
     const [checkExit, checkStdout, checkStderr] = await Promise.all([
       check.exited,
       new Response(check.stdout).text(),
@@ -106,6 +120,34 @@ describe("pinned installation", () => {
     expect((await stat(result.paths.config)).mode & 0o777).toBe(0o600);
     expect((await stat(result.paths.secrets)).mode & 0o777).toBe(0o600);
     expect(services.reloads).toBe(2);
+  });
+});
+
+describe("uninstall", () => {
+  test("removes installed code while preserving config and secrets", async () => {
+    const home = await temporaryHome();
+    const services = new FakeServices();
+    const { result } = await initialized(home, services);
+
+    await uninstallInstallation(home, false, services);
+
+    await expect(stat(result.paths.launcher)).rejects.toThrow();
+    await expect(stat(result.paths.dataDirectory)).rejects.toThrow();
+    await expect(stat(result.paths.service)).rejects.toThrow();
+    expect(await readFile(result.paths.config, "utf8")).toContain('"apps"');
+    expect(await readFile(result.paths.secrets, "utf8")).toBe("");
+    expect(services.stops).toBe(1);
+    expect(services.unitReloads).toBe(1);
+  });
+
+  test("purges config and secrets only when requested", async () => {
+    const home = await temporaryHome();
+    const services = new FakeServices();
+    const { result } = await initialized(home, services);
+
+    await uninstallInstallation(home, true, services);
+
+    await expect(stat(result.paths.configDirectory)).rejects.toThrow();
   });
 });
 
@@ -202,12 +244,14 @@ describe("systemd service management", () => {
 
     await services.reload();
     await services.enableAndRestart();
+    await services.disableAndStop();
 
     expect(runner.calls).toEqual([
       ["systemctl", "--user", "daemon-reload"],
       ["systemctl", "--user", "try-restart", "shibumi-server.service"],
       ["systemctl", "--user", "enable", "shibumi-server.service"],
       ["systemctl", "--user", "restart", "shibumi-server.service"],
+      ["systemctl", "--user", "disable", "--now", "shibumi-server.service"],
     ]);
   });
 

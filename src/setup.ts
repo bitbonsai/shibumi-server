@@ -177,6 +177,18 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}): Promise
   };
 }
 
+export async function confirmPurge(): Promise<boolean> {
+  const accepted = await confirm({
+    message: "Permanently delete shibumi-server config and webhook secrets?",
+    initialValue: false,
+  });
+  if (cancelled(accepted) || !accepted) {
+    cancel("Uninstall cancelled.");
+    return false;
+  }
+  return true;
+}
+
 export async function runInteractiveSetup(options: {
   home: string;
   packageRoot: string;
@@ -197,12 +209,18 @@ export async function runInteractiveSetup(options: {
 
   const progress = spinner();
   progress.start("Installing the pinned service");
-  const installation = await initializeInstallation({
-    home: options.home,
-    packageRoot: resolve(options.packageRoot),
-    bunExecutable: options.bunExecutable,
-  });
-  progress.stop(`Installed shibumi-server ${installation.version}`);
+  let installation;
+  try {
+    installation = await initializeInstallation({
+      home: options.home,
+      packageRoot: resolve(options.packageRoot),
+      bunExecutable: options.bunExecutable,
+    });
+    progress.stop(`Installed shibumi-server ${installation.version}`);
+  } catch (error) {
+    progress.stop("Installation failed", 1);
+    throw error;
+  }
 
   outro([
     `Launcher: ${installation.paths.launcher}`,
@@ -220,8 +238,14 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
 
   const progress = spinner();
   progress.start(`Adding ${answers.domain}`);
-  const app = await addApp({ home, ...answers });
-  progress.stop(`Added ${answers.domain}`);
+  let app;
+  try {
+    app = await addApp({ home, ...answers });
+    progress.stop(`Added ${answers.domain}`);
+  } catch (error) {
+    progress.stop(`Failed to add ${answers.domain}`, 1);
+    throw error;
+  }
 
   const paths = installationPaths(home);
   outro([

@@ -48,20 +48,30 @@ export interface AddAppResult {
 
 export interface ServiceManager {
   reload(): Promise<void>;
+  reloadUnits(): Promise<void>;
   enableAndRestart(): Promise<void>;
+  disableAndStop(): Promise<void>;
 }
 
 export class SystemdUserServiceManager implements ServiceManager {
   constructor(private readonly runner: CommandRunner = new BunCommandRunner()) {}
 
   async reload(): Promise<void> {
-    await this.run(["--user", "daemon-reload"]);
+    await this.reloadUnits();
     await this.run(["--user", "try-restart", "shibumi-server.service"]);
+  }
+
+  async reloadUnits(): Promise<void> {
+    await this.run(["--user", "daemon-reload"]);
   }
 
   async enableAndRestart(): Promise<void> {
     await this.run(["--user", "enable", "shibumi-server.service"]);
     await this.run(["--user", "restart", "shibumi-server.service"]);
+  }
+
+  async disableAndStop(): Promise<void> {
+    await this.run(["--user", "disable", "--now", "shibumi-server.service"]);
   }
 
   private async run(args: string[]): Promise<void> {
@@ -111,12 +121,32 @@ async function atomicWrite(path: string, content: string, mode: number): Promise
   }
 }
 
+function systemdPath(value: string): string {
+  if (!isAbsolute(value) || /[\s'"\\%]/.test(value)) {
+    throw new Error(`path is unsafe for a systemd unit: ${value}`);
+  }
+  return value;
+}
+
 function systemdQuote(value: string): string {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+function launcher(paths: InstallationPaths, bunExecutable: string): string {
+  return `#!/bin/sh\nexec ${shellQuote(bunExecutable)} ${shellQuote(join(paths.currentRelease, "src", "cli.ts"))} "$@"\n`;
+}
+
 function serviceUnit(paths: InstallationPaths, bunExecutable: string): string {
-  return `[Unit]\nDescription=Shibumi webhook deploy service\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=${systemdQuote(paths.currentRelease)}\nEnvironmentFile=${systemdQuote(paths.secrets)}\nExecStart=${systemdQuote(bunExecutable)} ${systemdQuote(join(paths.currentRelease, "src", "cli.ts"))} serve --config ${systemdQuote(paths.config)}\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nMemoryHigh=1280M\nMemoryMax=1536M\nMemorySwapMax=256M\nCPUQuota=200%\nTasksMax=512\nOOMPolicy=stop\nNoNewPrivileges=true\nPrivateTmp=true\n\n[Install]\nWantedBy=default.target\n`;
+  const workingDirectory = systemdPath(paths.currentRelease);
+  const environmentFile = systemdPath(paths.secrets);
+  systemdPath(bunExecutable);
+  systemdPath(join(paths.currentRelease, "src", "cli.ts"));
+  systemdPath(paths.config);
+  return `[Unit]\nDescription=Shibumi webhook deploy service\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=${workingDirectory}\nEnvironmentFile=${environmentFile}\nExecStart=${systemdQuote(bunExecutable)} ${systemdQuote(join(paths.currentRelease, "src", "cli.ts"))} serve --config ${systemdQuote(paths.config)}\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nMemoryHigh=1280M\nMemoryMax=1536M\nMemorySwapMax=256M\nCPUQuota=200%\nTasksMax=512\nOOMPolicy=stop\nNoNewPrivileges=true\nPrivateTmp=true\n\n[Install]\nWantedBy=default.target\n`;
 }
 
 function initialConfig(): Record<string, unknown> {
@@ -141,6 +171,8 @@ export async function initializeInstallation(
   }
 
   const paths = installationPaths(resolve(options.home));
+  const bunExecutable = resolve(options.bunExecutable);
+  const unit = serviceUnit(paths, bunExecutable);
   await mkdir(paths.configDirectory, { recursive: true, mode: 0o700 });
   await chmod(paths.configDirectory, 0o700);
   await mkdir(paths.releasesDirectory, { recursive: true, mode: 0o700 });
@@ -168,10 +200,7 @@ export async function initializeInstallation(
   await symlink(relative(paths.dataDirectory, release), nextLink);
   await rename(nextLink, paths.currentRelease);
 
-  const nextLauncher = `${paths.launcher}.${process.pid}.next`;
-  await rm(nextLauncher, { force: true });
-  await symlink(relative(paths.binDirectory, join(paths.currentRelease, "src", "cli.ts")), nextLauncher);
-  await rename(nextLauncher, paths.launcher);
+  await atomicWrite(paths.launcher, launcher(paths, bunExecutable), 0o755);
 
   if (!await exists(paths.config)) {
     await atomicWrite(paths.config, `${JSON.stringify(initialConfig(), null, 2)}\n`, 0o600);
@@ -180,10 +209,27 @@ export async function initializeInstallation(
   }
   if (!await exists(paths.secrets)) await atomicWrite(paths.secrets, "", 0o600);
   else await chmod(paths.secrets, 0o600);
-  await atomicWrite(paths.service, serviceUnit(paths, resolve(options.bunExecutable)), 0o600);
+  await atomicWrite(paths.service, unit, 0o600);
   await services.reload();
 
   return { version: packageJson.version, paths };
+}
+
+export async function uninstallInstallation(
+  home: string,
+  purge = false,
+  services: ServiceManager = new SystemdUserServiceManager(),
+): Promise<InstallationPaths> {
+  const paths = installationPaths(resolve(home));
+  if (await exists(paths.service)) {
+    await services.disableAndStop();
+    await rm(paths.service, { force: true });
+    await services.reloadUnits();
+  }
+  await rm(paths.launcher, { force: true });
+  await rm(paths.dataDirectory, { recursive: true, force: true });
+  if (purge) await rm(paths.configDirectory, { recursive: true, force: true });
+  return paths;
 }
 
 function appIdFor(domain: string): string {

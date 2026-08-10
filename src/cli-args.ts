@@ -4,6 +4,7 @@ export type CliCommand =
   | { name: "setup" }
   | { name: "check" | "serve"; config: string }
   | { name: "init" }
+  | { name: "uninstall"; purge: boolean; yes: boolean }
   | {
       name: "add";
       domain: string;
@@ -24,8 +25,9 @@ export const usageText = `Usage:
   shibumi-server                         Interactive installation
   shibumi-server setup                   Interactive installation
   shibumi-server init                    Install only (automation)
+  shibumi-server uninstall [--purge [--yes]]
   shibumi-server add <domain>             Add an app interactively
-  shibumi-server add <domain> --repository <owner/repo> --checkout <absolute-path> --port <port> [options] [-- <test-command...>]
+  shibumi-server add <domain> --repository <github:owner/repo> --checkout <absolute-path> --port <port> [options] [-- <test-command...>]
   shibumi-server check --config <path>
   shibumi-server serve --config <path>
 
@@ -78,6 +80,14 @@ export function parseCliArgs(argv: string[]): CliCommand {
     if (args.length > 0) fail("init does not accept arguments");
     return { name };
   }
+  if (name === "uninstall") {
+    const flags = new Set(args);
+    if (flags.size !== args.length) fail("uninstall flags may only be used once");
+    const unknown = args.find((arg) => arg !== "--purge" && arg !== "--yes");
+    if (unknown) fail(`unknown option: ${unknown}`);
+    if (flags.has("--yes") && !flags.has("--purge")) fail("--yes requires --purge");
+    return { name, purge: flags.has("--purge"), yes: flags.has("--yes") };
+  }
 
   if (name === "check" || name === "serve") {
     const values = optionValues(args, new Set(["--config"]));
@@ -112,7 +122,7 @@ export function parseCliArgs(argv: string[]): CliCommand {
     return {
       name,
       domain,
-      repository: values.get("--repository"),
+      repository: values.get("--repository")?.replace(/^github:/, ""),
       checkout: values.get("--checkout"),
       hostPort: portValue === undefined ? undefined : Number(portValue),
       testCommand,

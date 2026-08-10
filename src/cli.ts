@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import packageJson from "../package.json";
 import { parseCliArgs, usageText } from "./cli-args";
 import { loadConfig, validateSecrets } from "./config";
-import { addApp, initializeInstallation, installationPaths } from "./install";
+import { addApp, initializeInstallation, installationPaths, uninstallInstallation } from "./install";
 import { WebhookService } from "./server";
 
 function requireLinux(): void {
@@ -58,6 +58,17 @@ try {
     });
     console.log(`Installed shibumi-server ${result.version} at ${result.paths.currentRelease}.`);
     console.log("The service is installed but will not start until an app is added.");
+  } else if (command.name === "uninstall") {
+    requireLinux();
+    if (command.purge && !command.yes) {
+      const { confirmPurge } = await import("./setup");
+      if (!await confirmPurge()) process.exit(0);
+    }
+    const paths = await uninstallInstallation(homedir(), command.purge);
+    console.log("Removed shibumi-server service, launcher, and installed releases.");
+    if (command.purge) console.log("Removed local config and webhook secrets.");
+    else console.log(`Preserved config and secrets in ${paths.configDirectory}.`);
+    console.log("App checkouts, containers, Caddy, and GitHub settings were not changed.");
   } else if (command.name === "add") {
     requireLinux();
     const { name: _, ...options } = command;

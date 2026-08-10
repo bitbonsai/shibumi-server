@@ -21,6 +21,7 @@ test("CLI help documents interactive installation, pinned installation, and app 
   expect(result.stdout).toContain("Interactive installation");
   expect(result.stdout).toContain("shibumi-server --version");
   expect(result.stdout).toContain("shibumi-server init");
+  expect(result.stdout).toContain("shibumi-server uninstall");
   expect(result.stdout).toContain("shibumi-server add <domain>");
   expect(result.stderr).toBe("");
 });

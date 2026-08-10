@@ -12,6 +12,12 @@ describe("CLI arguments", () => {
     expect(parseCliArgs(["setup"])).toEqual({ name: "setup" });
   });
 
+  test("parses uninstall modes", () => {
+    expect(parseCliArgs(["uninstall"])).toEqual({ name: "uninstall", purge: false, yes: false });
+    expect(parseCliArgs(["uninstall", "--purge"])).toEqual({ name: "uninstall", purge: true, yes: false });
+    expect(parseCliArgs(["uninstall", "--purge", "--yes"])).toEqual({ name: "uninstall", purge: true, yes: true });
+  });
+
   test("parses check and serve config paths", () => {
     expect(parseCliArgs(["check", "--config", "/tmp/config.json"])).toEqual({
       name: "check",
@@ -27,7 +33,7 @@ describe("CLI arguments", () => {
     expect(parseCliArgs([
       "add",
       "example.com",
-      "--repository", "owner/repo",
+      "--repository", "github:owner/repo",
       "--checkout", "/srv/apps/example",
       "--port", "9100",
       "--compose-command", "podman-compose",
@@ -77,6 +83,8 @@ describe("CLI arguments", () => {
     expect(() => parseCliArgs(["setup", "extra"])).toThrow("does not accept");
     expect(() => parseCliArgs(["version", "extra"])).toThrow("does not accept");
     expect(() => parseCliArgs(["init", "extra"])).toThrow("does not accept");
+    expect(() => parseCliArgs(["uninstall", "--yes"])).toThrow("requires --purge");
+    expect(() => parseCliArgs(["uninstall", "--purge", "--purge"])).toThrow("only be used once");
     expect(() => parseCliArgs(["check"])).toThrow("--config");
     expect(() => parseCliArgs(["check", "--config", "a", "--config", "b"])).toThrow("only be used once");
     expect(() => parseCliArgs([
