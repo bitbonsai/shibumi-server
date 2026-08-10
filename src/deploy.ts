@@ -186,6 +186,22 @@ async function waitForHealth(app: AppConfig, dependencies: DeployDependencies): 
   throw new DeploymentError("health", `health check did not pass after ${app.healthAttempts} attempts`);
 }
 
+async function pruneDanglingImages(dependencies: DeployDependencies): Promise<void> {
+  try {
+    await runChecked(
+      dependencies,
+      "prune",
+      "podman",
+      ["image", "prune", "--force"],
+      { capture: true, timeoutMs: 60_000 },
+    );
+  } catch (error) {
+    dependencies.logger.error("image cleanup failed after a healthy deployment", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export async function deploy(appId: string, app: AppConfig, commit: string, dependencies: DeployDependencies): Promise<void> {
   const startedAt = Date.now();
   await checkResources(app, dependencies);
@@ -231,6 +247,7 @@ export async function deploy(appId: string, app: AppConfig, commit: string, depe
   }
   await runChecked(dependencies, "start", composeExecutable, [...compose, "up", "-d", "--remove-orphans"], options);
   await waitForHealth(app, dependencies);
+  await pruneDanglingImages(dependencies);
 
   dependencies.logger.info("deployment succeeded", {
     app: appId,

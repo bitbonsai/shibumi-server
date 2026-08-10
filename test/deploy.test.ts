@@ -66,8 +66,9 @@ describe("deployment pipeline", () => {
       ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "build"],
       ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "run", "--rm", "web", "bun", "test"],
       ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "up", "-d", "--remove-orphans"],
+      ["podman", "image", "prune", "--force"],
     ]);
-    expect(runner.calls.at(-1)?.options?.env).toEqual({ SHIBUMI_PORT: "9100" });
+    expect(runner.calls.find(({ args }) => args.includes("up"))?.options?.env).toEqual({ SHIBUMI_PORT: "9100" });
     expect(runner.calls.find(({ args }) => args.at(-1) === "build")?.options?.timeoutMs).toBe(600_000);
   });
 
@@ -84,6 +85,28 @@ describe("deployment pipeline", () => {
     expect(runner.calls.some(({ args }) => args.includes("config") && args.includes("--quiet"))).toBe(true);
     expect(runner.calls.some(({ args }) => args.includes("run"))).toBe(false);
     expect(runner.calls.some(({ args }) => args.includes("up"))).toBe(true);
+    expect(runner.calls.at(-1)?.args).toEqual(["image", "prune", "--force"]);
+  });
+
+  test("does not fail a healthy deployment when image cleanup fails", async () => {
+    class PruneFailingRunner extends FakeRunner {
+      override async run(command: string, args: string[], options?: CommandOptions): Promise<CommandResult> {
+        const result = await super.run(command, args, options);
+        if (command === "podman" && args[0] === "image") {
+          return { exitCode: 1, stdout: "", stderr: "cleanup failed" };
+        }
+        return result;
+      }
+    }
+    const runner = new PruneFailingRunner();
+    runner.responses = [
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${commit}\n`, stderr: "" },
+    ];
+
+    await expect(deploy("myapp", app, commit, dependencies(runner))).resolves.toBeUndefined();
+    expect(runner.calls.at(-1)?.args).toEqual(["image", "prune", "--force"]);
   });
 
   test("stops before building when the Compose config is invalid", async () => {
@@ -208,5 +231,6 @@ describe("deployment pipeline", () => {
     ];
     const unavailable: Fetcher = async () => new Response("no", { status: 503 });
     await expect(deploy("myapp", app, commit, dependencies(runner, unavailable))).rejects.toThrow("health check did not pass");
+    expect(runner.calls.some(({ args }) => args[0] === "image" && args[1] === "prune")).toBe(false);
   });
 });
