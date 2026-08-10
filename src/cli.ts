@@ -57,13 +57,25 @@ try {
     console.log("The service is installed but will not start until an app is added.");
   } else if (command.name === "add") {
     requireLinux();
-    const result = await addApp({ home: homedir(), ...command });
-    const paths = installationPaths(homedir());
-    console.log(`Added ${result.appId} and restarted shibumi-server.`);
-    console.log(`Webhook URL: https://${command.domain}/hooks/github/${result.appId}`);
-    console.log(`Webhook secret: ${result.secretEnvironmentVariable} in ${paths.secrets}`);
-    console.log(`Caddy upstream: 127.0.0.1:${command.hostPort}`);
-    console.log("Add the webhook route to Caddy before the app's normal handler; Caddy and GitHub are not modified automatically.");
+    const { name: _, ...options } = command;
+    if (options.repository && options.checkout && options.hostPort !== undefined) {
+      const result = await addApp({
+        home: homedir(),
+        ...options,
+        repository: options.repository,
+        checkout: options.checkout,
+        hostPort: options.hostPort,
+      });
+      const paths = installationPaths(homedir());
+      console.log(`Added ${result.appId} and restarted shibumi-server.`);
+      console.log(`Webhook URL: https://${options.domain}/hooks/github/${result.appId}`);
+      console.log(`Webhook secret: ${result.secretEnvironmentVariable} in ${paths.secrets}`);
+      console.log(`Caddy upstream: 127.0.0.1:${options.hostPort}`);
+      console.log("Add the webhook route to Caddy before the app's normal handler; Caddy and GitHub are not modified automatically.");
+    } else {
+      const { runInteractiveAdd } = await import("./setup");
+      await runInteractiveAdd({ home: homedir(), ...options });
+    }
   } else {
     const config = await loadConfig(command.config);
     validateSecrets(config);

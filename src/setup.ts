@@ -61,47 +61,63 @@ function stopSetup(): undefined {
   return undefined;
 }
 
-export async function promptForSetup(): Promise<SetupAnswers | undefined> {
-  const domain = await text({
+export async function promptForApp(initial: Partial<SetupAnswers> = {}): Promise<SetupAnswers | undefined> {
+  if (initial.domain !== undefined && !DOMAIN.test(initial.domain)) {
+    throw new Error("domain must be a lowercase public hostname such as example.com");
+  }
+  if (initial.repository !== undefined && !REPOSITORY.test(initial.repository)) {
+    throw new Error("repository must use owner/repository");
+  }
+  if (initial.checkout !== undefined && !isAbsolute(initial.checkout)) {
+    throw new Error("checkout must be an absolute path");
+  }
+  if (initial.hostPort !== undefined && (!Number.isInteger(initial.hostPort) || initial.hostPort < 1024 || initial.hostPort > 65_535)) {
+    throw new Error("port must be an integer between 1024 and 65535");
+  }
+
+  const domain = initial.domain ?? await text({
     message: "Which domain will this app use?",
     placeholder: "example.com",
     validate: (value) => DOMAIN.test(value) ? undefined : "Use a lowercase public hostname such as example.com",
   });
   if (cancelled(domain)) return stopSetup();
 
-  const repository = await text({
+  const repository = initial.repository ?? await text({
     message: "Which GitHub repository?",
     placeholder: "owner/repository",
     validate: (value) => REPOSITORY.test(value) ? undefined : "Use owner/repository",
   });
   if (cancelled(repository)) return stopSetup();
 
-  const checkout = await text({
+  const checkout = initial.checkout ?? await text({
     message: "Where should deployments live?",
     defaultValue: defaultCheckout(domain),
     validate: (value) => isAbsolute(value) ? undefined : "Use an absolute path",
   });
   if (cancelled(checkout)) return stopSetup();
 
-  const port = await text({
-    message: "Which local port should Caddy use?",
-    defaultValue: "9100",
-    validate: (value) => {
-      const parsed = Number(value);
-      return Number.isInteger(parsed) && parsed >= 1024 && parsed <= 65_535
-        ? undefined
-        : "Use an integer between 1024 and 65535";
-    },
-  });
+  const port = initial.hostPort === undefined
+    ? await text({
+        message: "Which local port should Caddy use?",
+        defaultValue: "9100",
+        validate: (value) => {
+          const parsed = Number(value);
+          return Number.isInteger(parsed) && parsed >= 1024 && parsed <= 65_535
+            ? undefined
+            : "Use an integer between 1024 and 65535";
+        },
+      })
+    : String(initial.hostPort);
   if (cancelled(port)) return stopSetup();
 
   const accepted = await confirm({
-    message: `Install shibumi-server and add ${domain}?`,
+    message: `Add ${domain} to shibumi-server?`,
     initialValue: true,
   });
   if (cancelled(accepted) || !accepted) return stopSetup();
 
   return {
+    ...initial,
     domain,
     repository,
     checkout,
@@ -121,8 +137,11 @@ export async function runInteractiveSetup(options: {
     return;
   }
 
-  const answers = await promptForSetup();
-  if (!answers) return;
+  const accepted = await confirm({
+    message: "Install shibumi-server on this server?",
+    initialValue: true,
+  });
+  if (cancelled(accepted) || !accepted) return stopSetup();
 
   const progress = spinner();
   progress.start("Installing the pinned service");
@@ -131,11 +150,27 @@ export async function runInteractiveSetup(options: {
     packageRoot: resolve(options.packageRoot),
     bunExecutable: options.bunExecutable,
   });
-  progress.message(`Adding ${answers.domain}`);
-  const app = await addApp({ home: options.home, ...answers });
-  progress.stop(`shibumi-server ${installation.version} is ready`);
+  progress.stop(`Installed shibumi-server ${installation.version}`);
 
-  const paths = installationPaths(options.home);
+  outro([
+    `Launcher: ${installation.paths.launcher}`,
+    "Next: shibumi-server add example.com",
+    "The service starts after its first app is added.",
+  ].join("\n"));
+}
+
+export async function runInteractiveAdd(options: { home: string } & Partial<SetupAnswers>): Promise<void> {
+  intro("渋み  add an app");
+  const { home, ...initial } = options;
+  const answers = await promptForApp(initial);
+  if (!answers) return;
+
+  const progress = spinner();
+  progress.start(`Adding ${answers.domain}`);
+  const app = await addApp({ home, ...answers });
+  progress.stop(`Added ${answers.domain}`);
+
+  const paths = installationPaths(home);
   outro([
     `Webhook URL: https://${answers.domain}/hooks/github/${app.appId}`,
     `Webhook secret: ${app.secretEnvironmentVariable} in ${paths.secrets}`,

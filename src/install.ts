@@ -14,6 +14,8 @@ export interface InstallationPaths {
   dataDirectory: string;
   releasesDirectory: string;
   currentRelease: string;
+  binDirectory: string;
+  launcher: string;
   systemdDirectory: string;
   service: string;
 }
@@ -81,6 +83,8 @@ export function installationPaths(home: string): InstallationPaths {
     dataDirectory,
     releasesDirectory: join(dataDirectory, "releases"),
     currentRelease: join(dataDirectory, "current"),
+    binDirectory: join(home, ".local", "bin"),
+    launcher: join(home, ".local", "bin", "shibumi-server"),
     systemdDirectory: join(home, ".config", "systemd", "user"),
     service: join(home, ".config", "systemd", "user", "shibumi-server.service"),
   };
@@ -140,6 +144,7 @@ export async function initializeInstallation(
   await mkdir(paths.configDirectory, { recursive: true, mode: 0o700 });
   await chmod(paths.configDirectory, 0o700);
   await mkdir(paths.releasesDirectory, { recursive: true, mode: 0o700 });
+  await mkdir(paths.binDirectory, { recursive: true, mode: 0o700 });
   await mkdir(paths.systemdDirectory, { recursive: true, mode: 0o700 });
 
   const release = join(paths.releasesDirectory, packageJson.version);
@@ -162,6 +167,11 @@ export async function initializeInstallation(
   await rm(nextLink, { force: true });
   await symlink(relative(paths.dataDirectory, release), nextLink);
   await rename(nextLink, paths.currentRelease);
+
+  const nextLauncher = `${paths.launcher}.${process.pid}.next`;
+  await rm(nextLauncher, { force: true });
+  await symlink(relative(paths.binDirectory, join(paths.currentRelease, "src", "cli.ts")), nextLauncher);
+  await rename(nextLauncher, paths.launcher);
 
   if (!await exists(paths.config)) {
     await atomicWrite(paths.config, `${JSON.stringify(initialConfig(), null, 2)}\n`, 0o600);

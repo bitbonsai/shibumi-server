@@ -59,6 +59,7 @@ describe("pinned installation", () => {
 
     expect(result.version).toBe("0.1.0");
     expect(await readlink(paths.currentRelease)).toBe("releases/0.1.0");
+    expect(await readlink(paths.launcher)).toBe("../share/shibumi-server/current/src/cli.ts");
     expect(await readFile(join(paths.currentRelease, "src", "cli.ts"), "utf8")).toContain("initializeInstallation");
     expect(JSON.parse(await readFile(paths.config, "utf8"))).toEqual({
       listen: { hostname: "127.0.0.1", port: 8787, maxBodyBytes: 1_048_576 },
@@ -74,8 +75,7 @@ describe("pinned installation", () => {
     expect(unit).not.toContain("bunx");
 
     const check = Bun.spawn([
-      process.execPath,
-      join(paths.currentRelease, "src", "cli.ts"),
+      paths.launcher,
       "--help",
     ], { cwd: paths.currentRelease, stdout: "pipe", stderr: "pipe" });
     const [checkExit, checkStdout, checkStderr] = await Promise.all([
@@ -85,7 +85,7 @@ describe("pinned installation", () => {
     ]);
     expect(checkStderr).toBe("");
     expect(checkExit).toBe(0);
-    expect(checkStdout).toContain("Interactive setup");
+    expect(checkStdout).toContain("Interactive installation");
 
     expect(services.reloads).toBe(1);
     expect(services.restarts).toBe(0);

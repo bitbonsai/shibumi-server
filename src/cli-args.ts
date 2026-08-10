@@ -6,9 +6,9 @@ export type CliCommand =
   | {
       name: "add";
       domain: string;
-      repository: string;
-      checkout: string;
-      hostPort: number;
+      repository?: string;
+      checkout?: string;
+      hostPort?: number;
       testCommand?: string[];
       ref?: string;
       composeFile?: string;
@@ -18,9 +18,10 @@ export type CliCommand =
     };
 
 export const usageText = `Usage:
-  shibumi-server                         Interactive setup
-  shibumi-server setup                   Interactive setup
+  shibumi-server                         Interactive installation
+  shibumi-server setup                   Interactive installation
   shibumi-server init                    Install only (automation)
+  shibumi-server add <domain>             Add an app interactively
   shibumi-server add <domain> --repository <owner/repo> --checkout <absolute-path> --port <port> [options] [-- <test-command...>]
   shibumi-server check --config <path>
   shibumi-server serve --config <path>
@@ -94,8 +95,8 @@ export function parseCliArgs(argv: string[]): CliCommand {
       "--service",
       "--health-path",
     ]));
-    const portValue = required(values, "--port");
-    if (!/^\d+$/.test(portValue)) fail("--port must be an integer");
+    const portValue = values.get("--port");
+    if (portValue !== undefined && !/^\d+$/.test(portValue)) fail("--port must be an integer");
     const composeFrontend = values.get("--compose-command");
     if (composeFrontend && composeFrontend !== "podman" && composeFrontend !== "podman-compose") {
       fail("--compose-command must be podman or podman-compose");
@@ -104,9 +105,9 @@ export function parseCliArgs(argv: string[]): CliCommand {
     return {
       name,
       domain,
-      repository: required(values, "--repository"),
-      checkout: required(values, "--checkout"),
-      hostPort: Number(portValue),
+      repository: values.get("--repository"),
+      checkout: values.get("--checkout"),
+      hostPort: portValue === undefined ? undefined : Number(portValue),
       testCommand,
       ref: values.get("--ref"),
       composeFile: values.get("--compose-file"),

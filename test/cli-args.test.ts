@@ -47,6 +47,16 @@ describe("CLI arguments", () => {
     });
   });
 
+  test("allows interactive app registration with only a domain", () => {
+    expect(parseCliArgs(["add", "sub.example.com"])).toMatchObject({
+      name: "add",
+      domain: "sub.example.com",
+      repository: undefined,
+      checkout: undefined,
+      hostPort: undefined,
+    });
+  });
+
   test("makes app-owned tests optional", () => {
     expect(parseCliArgs([
       "add", "example.com",
