@@ -74,7 +74,7 @@ Add the first app, or another one later, with the installed command:
 shibumi-server add example.com
 ```
 
-Interactive app setup asks for the GitHub repository, deployment directory, and local port. It generates a unique 32-byte webhook secret, enables the user service, and prints the webhook URL, secret variable name, and Caddy upstream. It does not modify Caddy or GitHub.
+Interactive app setup asks for the repository and deployment directory, then assigns the first available loopback port from `9100`. It generates a unique 32-byte webhook secret, enables the user service, and prints the webhook URL, secret variable name, and Caddy upstream. It does not modify Caddy or GitHub.
 
 For scripts and unattended setup, pin the bootstrap release and provide every app value explicitly:
 

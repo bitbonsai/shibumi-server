@@ -1,10 +1,13 @@
 import { cancel, confirm, intro, isCancel, outro, spinner, text } from "@clack/prompts";
+import { readFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { isAbsolute, join, resolve } from "node:path";
 import { BunCommandRunner, type CommandRunner } from "./deploy";
 import { addApp, initializeInstallation, installationPaths, type AddAppOptions } from "./install";
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const GITHUB_REPOSITORY = /^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 export type SetupAnswers = Omit<AddAppOptions, "home">;
 
@@ -52,6 +55,51 @@ export function defaultCheckout(domain: string): string {
   return join("/srv/shibumi/apps", domain.replaceAll(".", "-"));
 }
 
+function portAvailable(port: number): Promise<boolean> {
+  return new Promise((resolveAvailability) => {
+    const server = createServer();
+    server.unref();
+    server.once("error", () => resolveAvailability(false));
+    server.listen(port, "127.0.0.1", () => server.close(() => resolveAvailability(true)));
+  });
+}
+
+export async function nextAvailablePort(
+  used: ReadonlySet<number>,
+  available: (port: number) => Promise<boolean> = portAvailable,
+  first = 9_100,
+): Promise<number> {
+  for (let port = first; port <= 65_535; port += 1) {
+    if (!used.has(port) && await available(port)) return port;
+  }
+  throw new Error(`no available port found from ${first} to 65535`);
+}
+
+async function automaticPort(home: string): Promise<number> {
+  const paths = installationPaths(home);
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(paths.config, "utf8"));
+  } catch (error) {
+    throw new Error(`cannot read config ${paths.config}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const root = value && typeof value === "object" && !Array.isArray(value)
+    ? value as { apps?: unknown; listen?: unknown }
+    : undefined;
+  const apps = root?.apps;
+  if (!apps || typeof apps !== "object" || Array.isArray(apps)) throw new Error("config.apps must be an object");
+  const used = new Set(
+    Object.values(apps)
+      .map((app) => app && typeof app === "object" && !Array.isArray(app) ? (app as { hostPort?: unknown }).hostPort : undefined)
+      .filter((port): port is number => Number.isInteger(port)),
+  );
+  if (root.listen && typeof root.listen === "object" && !Array.isArray(root.listen)) {
+    const listenerPort = (root.listen as { port?: unknown }).port;
+    if (Number.isInteger(listenerPort)) used.add(listenerPort as number);
+  }
+  return nextAvailablePort(used);
+}
+
 function cancelled(value: unknown): value is symbol {
   return isCancel(value);
 }
@@ -82,12 +130,16 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}): Promise
   });
   if (cancelled(domain)) return stopSetup();
 
-  const repository = initial.repository ?? await text({
-    message: "Where's the repository?",
-    placeholder: "github/repo",
-    validate: (value) => REPOSITORY.test(value) ? undefined : "Use owner/repository",
-  });
-  if (cancelled(repository)) return stopSetup();
+  let repository = initial.repository;
+  if (repository === undefined) {
+    const answer = await text({
+      message: "Where's the repository?",
+      placeholder: "github:user/repo",
+      validate: (value) => GITHUB_REPOSITORY.test(value) ? undefined : "Use github:user/repo",
+    });
+    if (cancelled(answer)) return stopSetup();
+    repository = answer.slice("github:".length);
+  }
 
   const checkout = initial.checkout ?? await text({
     message: "Where should deployments live?",
@@ -162,7 +214,8 @@ export async function runInteractiveSetup(options: {
 export async function runInteractiveAdd(options: { home: string } & Partial<SetupAnswers>): Promise<void> {
   intro("渋み  add an app");
   const { home, ...initial } = options;
-  const answers = await promptForApp(initial);
+  const hostPort = initial.hostPort ?? await automaticPort(home);
+  const answers = await promptForApp({ ...initial, hostPort });
   if (!answers) return;
 
   const progress = spinner();

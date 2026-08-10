@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
-import { defaultCheckout, setupRequirementIssues } from "../src/setup";
+import { defaultCheckout, nextAvailablePort, setupRequirementIssues } from "../src/setup";
 
 class RequirementRunner implements CommandRunner {
   constructor(
@@ -42,4 +42,13 @@ describe("interactive setup", () => {
     expect(defaultCheckout("www.example.com")).toBe("/srv/shibumi/apps/www-example-com");
   });
 
+  test("assigns the first unassigned and locally available port", async () => {
+    const checked: number[] = [];
+    const available = async (port: number) => {
+      checked.push(port);
+      return port !== 9_102;
+    };
+    expect(await nextAvailablePort(new Set([9_100, 9_101]), available)).toBe(9_103);
+    expect(checked).toEqual([9_102, 9_103]);
+  });
 });
