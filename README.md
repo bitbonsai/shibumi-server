@@ -6,7 +6,7 @@ Small, secure webhook deployments for a VPS running rootless Podman.
 
 ## How it works
 
-A signed GitHub push webhook causes `shibumi-server` to fetch the exact commit, validate the Compose config, build it locally, replace the old container with Podman Compose, and check the new container's local health endpoint. Projects can optionally run their own test command before startup. After a healthy deployment, the server prunes dangling images left by earlier builds. Caddy remains the public HTTPS server.
+A signed GitHub push webhook causes `shibumi-server` to fetch the exact commit, validate the Compose config, build it locally, replace the old container with Podman Compose, and check the new container's local health endpoint. Projects can optionally run their own test command before startup. After a healthy deployment, the server keeps the active image and two rollback images, then prunes older dangling images. Caddy remains the public HTTPS server.
 
 ```text
 GitHub → Caddy → shibumi-server → Git → rootless Podman → health check

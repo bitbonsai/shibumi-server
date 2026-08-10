@@ -14,7 +14,7 @@ Git push
   → optional app-owned tests run in a temporary container
   → Podman replaces the application container
   → shibumi-server checks the local health endpoint
-  → Podman prunes dangling images left by earlier builds
+  → Podman retains two rollback images and prunes older dangling images
 ```
 
 The receiver listens on a loopback address. Caddy is the only public HTTP server.
@@ -88,7 +88,9 @@ Preflight checks, deadlines, and cgroup ceilings are defense in depth, not a sub
 
 ## Image cleanup
 
-After a healthy deployment, the receiver runs `podman image prune --force`. Podman's default image prune removes dangling images, including untagged images left when a Compose build replaces an image tag. It does not use `--all` or `system prune`, so tagged images, running containers, volumes, and unrelated networks remain. Cleanup failure is logged but does not turn a healthy deployment into a failed one.
+After a healthy deployment, the receiver tags the active image in an app-specific local repository. It keeps that image plus the configured number of earlier successful images, two by default, so an operator has known images available for rollback. Release tags older than that window are removed before `podman image prune --force` removes dangling data.
+
+The retention setting accepts zero through ten rollback images. Image cleanup does not use `--all` or `system prune`, so retained tags, running containers, volumes, and unrelated networks remain. Retention or cleanup failure is logged but does not turn a healthy deployment into a failed one.
 
 ## Ports and Caddy
 

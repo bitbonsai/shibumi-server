@@ -20,6 +20,7 @@ const app: AppConfig = {
   buildTimeoutMs: 600_000,
   healthAttempts: 2,
   healthIntervalMs: 10,
+  retainedRollbackImages: 2,
 };
 
 class FakeRunner implements CommandRunner {
@@ -28,7 +29,11 @@ class FakeRunner implements CommandRunner {
 
   async run(command: string, args: string[], options?: CommandOptions): Promise<CommandResult> {
     this.calls.push({ command, args, options });
-    return this.responses.shift() ?? { exitCode: 0, stdout: "", stderr: "" };
+    const response = this.responses.shift();
+    if (response) return response;
+    if (args.includes("ps") && args.includes("--quiet")) return { exitCode: 0, stdout: "container-id\n", stderr: "" };
+    if (args[0] === "container" && args[1] === "inspect") return { exitCode: 0, stdout: "sha256:image-id\n", stderr: "" };
+    return { exitCode: 0, stdout: "", stderr: "" };
   }
 }
 
@@ -57,7 +62,8 @@ describe("deployment pipeline", () => {
 
     await deploy("myapp", app, commit, dependencies(runner));
 
-    expect(runner.calls.map(({ command, args }) => [command, ...args])).toEqual([
+    const calls = runner.calls.map(({ command, args }) => [command, ...args]);
+    expect(calls.slice(0, 8)).toEqual([
       ["git", "-C", app.checkout, "status", "--porcelain"],
       ["git", "-C", app.checkout, "fetch", "--prune", "origin", app.ref],
       ["git", "-C", app.checkout, "rev-parse", "FETCH_HEAD"],
@@ -66,8 +72,13 @@ describe("deployment pipeline", () => {
       ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "build"],
       ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "run", "--rm", "web", "bun", "test"],
       ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "up", "-d", "--remove-orphans"],
-      ["podman", "image", "prune", "--force"],
     ]);
+    expect(calls[8]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "ps", "--quiet", "web"]);
+    expect(calls[9]).toEqual(["podman", "container", "inspect", "--format", "{{.Image}}", "container-id"]);
+    expect(calls[10]?.slice(0, 4)).toEqual(["podman", "image", "tag", "sha256:image-id"]);
+    expect(calls[10]?.[4]).toMatch(/^localhost\/shibumi-server\/myapp:release-\d{13}-a{12}$/);
+    expect(calls[11]).toEqual(["podman", "image", "list", "--filter", "reference=localhost/shibumi-server/myapp:release-*", "--format", "{{.Tag}}"]);
+    expect(calls[12]).toEqual(["podman", "image", "prune", "--force"]);
     expect(runner.calls.find(({ args }) => args.includes("up"))?.options?.env).toEqual({ SHIBUMI_PORT: "9100" });
     expect(runner.calls.find(({ args }) => args.at(-1) === "build")?.options?.timeoutMs).toBe(600_000);
   });
@@ -92,7 +103,7 @@ describe("deployment pipeline", () => {
     class PruneFailingRunner extends FakeRunner {
       override async run(command: string, args: string[], options?: CommandOptions): Promise<CommandResult> {
         const result = await super.run(command, args, options);
-        if (command === "podman" && args[0] === "image") {
+        if (command === "podman" && args[0] === "image" && args[1] === "prune") {
           return { exitCode: 1, stdout: "", stderr: "cleanup failed" };
         }
         return result;
@@ -106,6 +117,44 @@ describe("deployment pipeline", () => {
     ];
 
     await expect(deploy("myapp", app, commit, dependencies(runner))).resolves.toBeUndefined();
+    expect(runner.calls.at(-1)?.args).toEqual(["image", "prune", "--force"]);
+  });
+
+  test("keeps the active image and two rollback images", async () => {
+    class RetentionRunner extends FakeRunner {
+      override async run(command: string, args: string[], options?: CommandOptions): Promise<CommandResult> {
+        if (command === "podman" && args[0] === "image" && args[1] === "list") {
+          this.calls.push({ command, args, options });
+          return {
+            exitCode: 0,
+            stdout: [
+              "release-1700000004000-bbbbbbbbbbbb",
+              "release-1700000003000-cccccccccccc",
+              "release-1700000002000-dddddddddddd",
+              "release-1700000001000-eeeeeeeeeeee",
+            ].join("\n"),
+            stderr: "",
+          };
+        }
+        return super.run(command, args, options);
+      }
+    }
+    const runner = new RetentionRunner();
+    runner.responses = [
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${commit}\n`, stderr: "" },
+    ];
+
+    await deploy("myapp", app, commit, dependencies(runner));
+
+    const removed = runner.calls
+      .filter(({ command, args }) => command === "podman" && args[0] === "image" && args[1] === "rm")
+      .map(({ args }) => args[2]);
+    expect(removed).toEqual([
+      "localhost/shibumi-server/myapp:release-1700000002000-dddddddddddd",
+      "localhost/shibumi-server/myapp:release-1700000001000-eeeeeeeeeeee",
+    ]);
     expect(runner.calls.at(-1)?.args).toEqual(["image", "prune", "--force"]);
   });
 

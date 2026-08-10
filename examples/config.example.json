@@ -20,7 +20,8 @@
       "minimumFreeDiskMb": 4096,
       "buildTimeoutMs": 600000,
       "healthAttempts": 20,
-      "healthIntervalMs": 500
+      "healthIntervalMs": 500,
+      "retainedRollbackImages": 2
     }
   }
 }

@@ -186,8 +186,65 @@ async function waitForHealth(app: AppConfig, dependencies: DeployDependencies): 
   throw new DeploymentError("health", `health check did not pass after ${app.healthAttempts} attempts`);
 }
 
-async function pruneDanglingImages(dependencies: DeployDependencies): Promise<void> {
+async function retainReleaseImages(
+  appId: string,
+  app: AppConfig,
+  commit: string,
+  releaseTimestamp: number,
+  composeExecutable: string,
+  compose: string[],
+  options: CommandOptions,
+  dependencies: DeployDependencies,
+): Promise<void> {
+  const repository = `localhost/shibumi-server/${appId}`;
+  const tag = `release-${releaseTimestamp}-${commit.slice(0, 12)}`;
+  const release = `${repository}:${tag}`;
+
   try {
+    const container = await runChecked(
+      dependencies,
+      "retain",
+      composeExecutable,
+      [...compose, "ps", "--quiet", app.service],
+      { ...options, capture: true },
+    );
+    const containerId = container.stdout.trim().split(/\s+/)[0];
+    if (!containerId) throw new DeploymentError("retain", "cannot find the healthy application container");
+
+    const image = await runChecked(
+      dependencies,
+      "retain",
+      "podman",
+      ["container", "inspect", "--format", "{{.Image}}", containerId],
+      { capture: true },
+    );
+    const imageId = image.stdout.trim();
+    if (!imageId) throw new DeploymentError("retain", "cannot find the healthy application image");
+
+    await runChecked(dependencies, "retain", "podman", ["image", "tag", imageId, release], { capture: true });
+    const listed = await runChecked(
+      dependencies,
+      "retain",
+      "podman",
+      ["image", "list", "--filter", `reference=${repository}:release-*`, "--format", "{{.Tag}}"],
+      { capture: true },
+    );
+    const releases = new Set(listed.stdout.split(/\r?\n/).filter((value) => /^release-\d{13}-[a-f0-9]{12}$/.test(value)));
+    releases.add(tag);
+    const retained = app.retainedRollbackImages + 1;
+    const expired = [...releases]
+      .sort((left, right) => right.localeCompare(left))
+      .slice(retained);
+
+    for (const expiredTag of expired) {
+      await runChecked(
+        dependencies,
+        "retain",
+        "podman",
+        ["image", "rm", `${repository}:${expiredTag}`],
+        { capture: true },
+      );
+    }
     await runChecked(
       dependencies,
       "prune",
@@ -196,7 +253,8 @@ async function pruneDanglingImages(dependencies: DeployDependencies): Promise<vo
       { capture: true, timeoutMs: 60_000 },
     );
   } catch (error) {
-    dependencies.logger.error("image cleanup failed after a healthy deployment", {
+    dependencies.logger.error("release image retention failed after a healthy deployment", {
+      app: appId,
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -247,7 +305,7 @@ export async function deploy(appId: string, app: AppConfig, commit: string, depe
   }
   await runChecked(dependencies, "start", composeExecutable, [...compose, "up", "-d", "--remove-orphans"], options);
   await waitForHealth(app, dependencies);
-  await pruneDanglingImages(dependencies);
+  await retainReleaseImages(appId, app, commit, startedAt, composeExecutable, compose, options, dependencies);
 
   dependencies.logger.info("deployment succeeded", {
     app: appId,

@@ -59,6 +59,8 @@ class SuccessfulRunner implements CommandRunner {
   async run(_command: string, args: string[], _options?: CommandOptions): Promise<CommandResult> {
     this.calls += 1;
     if (args.includes("rev-parse")) return { exitCode: 0, stdout: `${commit}\n`, stderr: "" };
+    if (args.includes("ps") && args.includes("--quiet")) return { exitCode: 0, stdout: "container-id\n", stderr: "" };
+    if (args[0] === "container" && args[1] === "inspect") return { exitCode: 0, stdout: "sha256:image-id\n", stderr: "" };
     return { exitCode: 0, stdout: "", stderr: "" };
   }
 }
@@ -135,7 +137,7 @@ describe("webhook server", () => {
 
     expect(replay.status).toBe(200);
     expect(await replay.json()).toEqual({ status: "duplicate", app: "myapp", delivery });
-    expect(runner.calls).toBe(9);
+    expect(runner.calls).toBe(13);
   });
 
   test("allows a failed delivery to be retried", async () => {

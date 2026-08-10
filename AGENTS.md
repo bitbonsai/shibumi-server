@@ -32,7 +32,7 @@ Use `SHIBUMI_COMPOSE_COMMAND=podman-compose` on hosts with the standalone Compos
 - Keep webhook secrets, credentials, real machine config, and deployment state out of Git and npm packages.
 - Preserve the per-app lock: concurrent deployment requests return `409` and are not queued.
 - Failed preflights, fetches, Compose validation, builds, or optional app tests must not run `compose up`.
-- Prune only dangling Podman images after a successful health check. Cleanup is best effort: log failures without failing a healthy deployment. Never broaden this to `--all` or `system prune`.
+- After a successful health check, retain the active app image and `retainedRollbackImages` earlier successful images (two by default), then prune dangling Podman images. Retention and cleanup are best effort: log failures without failing a healthy deployment. Never broaden cleanup to `--all` or `system prune`.
 - Preserve host resource guards: preflight memory/disk floors, a cancellable build deadline, systemd ceilings, and per-app Compose limits.
 - The systemd unit must execute a pinned local package copy, never an unpinned `bunx` command. Init must preserve machine config/secrets; repeated app registration must not rotate secrets.
 - No-argument interactive setup checks Git, Caddy, rootless Podman, and the systemd user session before combining `init` and `add`; keep both explicit commands for automation. App-owned tests are optional and available only through explicit config/`add` arguments; never invoke them through a shell.

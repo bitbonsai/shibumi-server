@@ -23,6 +23,7 @@ export interface AppConfig {
   buildTimeoutMs: number;
   healthAttempts: number;
   healthIntervalMs: number;
+  retainedRollbackImages: number;
 }
 
 export interface ServerConfig {
@@ -168,6 +169,12 @@ export function parseConfig(value: unknown): ServerConfig {
       buildTimeoutMs: integer(appValue.buildTimeoutMs ?? 600_000, `apps.${appId}.buildTimeoutMs`, 1_000, 3_600_000),
       healthAttempts: integer(appValue.healthAttempts ?? 20, `apps.${appId}.healthAttempts`, 1, 120),
       healthIntervalMs: integer(appValue.healthIntervalMs ?? 500, `apps.${appId}.healthIntervalMs`, 10, 60_000),
+      retainedRollbackImages: integer(
+        appValue.retainedRollbackImages ?? 2,
+        `apps.${appId}.retainedRollbackImages`,
+        0,
+        10,
+      ),
     };
     composePath(app);
     apps[appId] = app;
