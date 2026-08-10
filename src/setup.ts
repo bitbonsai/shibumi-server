@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { isAbsolute, join, resolve } from "node:path";
 import { BunCommandRunner, type CommandRunner } from "./deploy";
-import { addApp, initializeInstallation, installationPaths, type AddAppOptions } from "./install";
+import { addApp, appIdForDomain, initializeInstallation, installationPaths, type AddAppOptions } from "./install";
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -52,7 +52,7 @@ export async function setupRequirementIssues(
 }
 
 export function defaultCheckout(domain: string): string {
-  return join("/srv/shibumi/apps", domain.replaceAll(".", "-"));
+  return join("/srv/shibumi/apps", appIdForDomain(domain));
 }
 
 function portAvailable(port: number): Promise<boolean> {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { addApp, initializeInstallation, installationPaths, SystemdUserServiceManager, uninstallInstallation, type ServiceManager } from "../src/install";
+import { addApp, appIdForDomain, initializeInstallation, installationPaths, SystemdUserServiceManager, uninstallInstallation, type ServiceManager } from "../src/install";
 import packageJson from "../package.json";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
 
@@ -152,6 +152,11 @@ describe("uninstall", () => {
 });
 
 describe("app registration", () => {
+  test("creates distinct ids for dots and literal hyphens", () => {
+    expect(appIdForDomain("something-some.org")).toBe("something--some-org");
+    expect(appIdForDomain("something.some-org")).toBe("something-some--org");
+  });
+
   test("adds a validated app, generates one secret, and starts the service", async () => {
     const home = await temporaryHome();
     const { services } = await initialized(home);

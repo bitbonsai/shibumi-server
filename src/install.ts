@@ -232,10 +232,10 @@ export async function uninstallInstallation(
   return paths;
 }
 
-function appIdFor(domain: string): string {
+export function appIdForDomain(domain: string): string {
   const normalized = domain.toLowerCase();
   if (!DOMAIN.test(normalized)) throw new Error("domain must be a lowercase public hostname such as example.com");
-  const appId = normalized.replaceAll(".", "-");
+  const appId = normalized.replaceAll("-", "--").replaceAll(".", "-");
   if (appId.length > 63) throw new Error("domain is too long to use as an app id");
   return appId;
 }
@@ -275,7 +275,7 @@ export async function addApp(
     throw new Error("health path must be an absolute path without a query or fragment");
   }
 
-  const appId = appIdFor(options.domain);
+  const appId = appIdForDomain(options.domain);
   const secretEnvironmentVariable = secretName(appId);
   const root = await rawConfig(paths.config);
   const apps = root.apps;
