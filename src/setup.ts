@@ -83,8 +83,8 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}): Promise
   if (cancelled(domain)) return stopSetup();
 
   const repository = initial.repository ?? await text({
-    message: "Which GitHub repository?",
-    placeholder: "owner/repository",
+    message: "Where's the repository?",
+    placeholder: "github/repo",
     validate: (value) => REPOSITORY.test(value) ? undefined : "Use owner/repository",
   });
   if (cancelled(repository)) return stopSetup();
