@@ -2,9 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { parseCliArgs } from "../src/cli-args";
 
 describe("CLI arguments", () => {
-  test("parses help and interactive setup", () => {
+  test("parses help, version, and interactive setup", () => {
     expect(parseCliArgs(["--help"])).toEqual({ name: "help" });
     expect(parseCliArgs(["help"])).toEqual({ name: "help" });
+    expect(parseCliArgs(["--version"])).toEqual({ name: "version" });
+    expect(parseCliArgs(["-v"])).toEqual({ name: "version" });
+    expect(parseCliArgs(["version"])).toEqual({ name: "version" });
     expect(parseCliArgs([])).toEqual({ name: "setup" });
     expect(parseCliArgs(["setup"])).toEqual({ name: "setup" });
   });
@@ -72,6 +75,7 @@ describe("CLI arguments", () => {
 
   test("rejects missing, duplicate, and unknown values", () => {
     expect(() => parseCliArgs(["setup", "extra"])).toThrow("does not accept");
+    expect(() => parseCliArgs(["version", "extra"])).toThrow("does not accept");
     expect(() => parseCliArgs(["init", "extra"])).toThrow("does not accept");
     expect(() => parseCliArgs(["check"])).toThrow("--config");
     expect(() => parseCliArgs(["check", "--config", "a", "--config", "b"])).toThrow("only be used once");

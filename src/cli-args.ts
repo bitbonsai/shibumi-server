@@ -1,5 +1,6 @@
 export type CliCommand =
   | { name: "help" }
+  | { name: "version" }
   | { name: "setup" }
   | { name: "check" | "serve"; config: string }
   | { name: "init" }
@@ -18,6 +19,8 @@ export type CliCommand =
     };
 
 export const usageText = `Usage:
+  shibumi-server --help                  Show help
+  shibumi-server --version               Show version
   shibumi-server                         Interactive installation
   shibumi-server setup                   Interactive installation
   shibumi-server init                    Install only (automation)
@@ -66,6 +69,10 @@ export function parseCliArgs(argv: string[]): CliCommand {
   if (name === "--help" || name === "-h" || name === "help") {
     if (args.length > 0) fail("help does not accept arguments");
     return { name: "help" };
+  }
+  if (name === "--version" || name === "-v" || name === "version") {
+    if (args.length > 0) fail("version does not accept arguments");
+    return { name: "version" };
   }
   if (name === "init") {
     if (args.length > 0) fail("init does not accept arguments");

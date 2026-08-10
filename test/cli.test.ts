@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
+import packageJson from "../package.json";
 
 async function cli(args: string[]) {
   const subprocess = Bun.spawn([process.execPath, join(import.meta.dir, "..", "src", "cli.ts"), ...args], {
@@ -18,9 +19,15 @@ test("CLI help documents interactive installation, pinned installation, and app 
   const result = await cli(["--help"]);
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("Interactive installation");
+  expect(result.stdout).toContain("shibumi-server --version");
   expect(result.stdout).toContain("shibumi-server init");
   expect(result.stdout).toContain("shibumi-server add <domain>");
   expect(result.stderr).toBe("");
+});
+
+test("CLI prints its package version", async () => {
+  const result = await cli(["--version"]);
+  expect(result).toEqual({ exitCode: 0, stdout: `${packageJson.version}\n`, stderr: "" });
 });
 
 test("CLI rejects installation on hosts without systemd", async () => {

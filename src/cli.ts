@@ -2,6 +2,7 @@
 
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import packageJson from "../package.json";
 import { parseCliArgs, usageText } from "./cli-args";
 import { loadConfig, validateSecrets } from "./config";
 import { addApp, initializeInstallation, installationPaths } from "./install";
@@ -38,6 +39,8 @@ try {
 
   if (command.name === "help") {
     console.log(usageText);
+  } else if (command.name === "version") {
+    console.log(packageJson.version);
   } else if (command.name === "setup") {
     requireLinux();
     const { runInteractiveSetup } = await import("./setup");
