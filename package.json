@@ -1,6 +1,6 @@
 {
   "name": "shibumi-server",
-  "version": "0.1.13",
+  "version": "0.1.15",
   "description": "Small, secure webhook deploy service for rootless Podman.",
   "license": "MIT",
   "type": "module",
@@ -12,7 +12,8 @@
     "start": "bun src/cli.ts serve",
     "test": "bun test",
     "check": "tsc --noEmit",
-    "pack:check": "npm pack --dry-run"
+    "pack:check": "npm pack --dry-run",
+    "prepublishOnly": "bun test && bun run check"
   },
   "files": [
     "src",

@@ -413,6 +413,16 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
     progress.start(`Checking DNS for ${initial.domain}`);
     const publicAddresses = await detectPublicAddresses();
     const dns = await checkDomainDns(initial.domain, publicAddresses);
+    if (dns.state === "unknown") {
+      progress.stop("DNS lookup could not be confirmed", 1);
+      cancel([
+        `Resolver checks for ${initial.domain} failed after three attempts. No changes were made.`,
+        ...dns.errors.map((error) => `  ${error}`),
+        `Check from this server: dig A ${initial.domain} && dig AAAA ${initial.domain}`,
+        "Rerun this command after DNS resolution recovers.",
+      ].join("\n"));
+      return;
+    }
     if (dns.state === "missing") {
       progress.stop("DNS is not configured", 1);
       const cloudflare = dns.nameservers.some((server) => server.endsWith(".cloudflare.com"));
@@ -455,6 +465,7 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
     for (const alias of caddy.site.aliases) {
       const status = await checkDomainDns(alias, expected);
       if (status.state === "ready" || status.state === "cloudflare") activeAliases.push(alias);
+      else if (status.state === "unknown") log.warn(`Skipping alias ${alias}: DNS lookup could not be confirmed`);
       else log.warn(`Skipping alias ${alias}: DNS is not ready`);
     }
     caddy.site.aliases = activeAliases;
