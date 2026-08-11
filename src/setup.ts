@@ -501,7 +501,7 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
       ...answers,
       caddyMode: existingCaddyMode ?? (caddy?.mode === "preserve" ? "preserve" : "managed"),
     });
-    progress.stop(`${answers.dryRun ? "Previewed" : "Added"} ${answers.domain}`);
+    progress.stop(`${answers.dryRun ? "Previewed" : existingCaddyMode ? "Already configured" : "Added"} ${answers.domain}`);
   } catch (error) {
     progress.stop(`Failed to ${action} ${answers.domain}`, 1);
     throw error;
@@ -522,13 +522,14 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
     return;
   }
 
-  note(formatReadySummary({
+  log.success(`${answers.domain} is ready`);
+  log.info(formatReadySummary({
     domain: answers.domain,
     appId: app.appId,
     hostPort: answers.hostPort,
     caddy: existingCaddyMode
       ? "already configured"
       : caddy?.mode === "preserve" ? "existing upstream preserved" : "configured and reloaded",
-  }), "App ready");
-  outro("Connect your project\n   https://shibumistack.dev/ship");
+  }));
+  outro("Connect your project: https://shibumistack.dev/ship");
 }
