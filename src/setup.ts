@@ -9,10 +9,9 @@ import { checkDomainDns, detectPublicAddresses } from "./domain";
 import { detectCaddySite, type CaddySiteOptions, type Compression, type HeaderProfile, type Indexing } from "./caddy";
 import { applyCaddyWithSudo, authorizeCaddySudo, type CaddyApplyRequest } from "./caddy-sudo";
 import { addApp, appIdForDomain, initializeInstallation, installationPaths, markCaddyManaged, type AddAppOptions } from "./install";
+import { normalizeGitHubRepository } from "./repository";
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const GITHUB_REPOSITORY = /^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 export type SetupAnswers = Omit<AddAppOptions, "home">;
 
@@ -57,7 +56,7 @@ export async function setupRequirementIssues(
 }
 
 export function defaultCheckout(domain: string, home: string): string {
-  return join(home, ".local", "share", "shibumi", "apps", appIdForDomain(domain));
+  return join(home, "www", appIdForDomain(domain));
 }
 
 function portAvailable(port: number): Promise<boolean> {
@@ -125,8 +124,9 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}, home = h
   if (initial.domain !== undefined && !DOMAIN.test(initial.domain)) {
     throw new Error("domain must be a lowercase public hostname such as example.com");
   }
-  if (initial.repository !== undefined && !REPOSITORY.test(initial.repository)) {
-    throw new Error("repository must use owner/repository");
+  const initialRepository = initial.repository === undefined ? undefined : normalizeGitHubRepository(initial.repository);
+  if (initial.repository !== undefined && !initialRepository) {
+    throw new Error("repository must use github:owner/repo or https://github.com/owner/repo");
   }
   if (initial.checkout !== undefined && !isAbsolute(initial.checkout)) {
     throw new Error("checkout must be an absolute path");
@@ -142,39 +142,40 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}, home = h
   });
   if (cancelled(domain)) return stopSetup();
 
-  let repository = initial.repository;
+  let repository = initialRepository;
   if (repository === undefined) {
     const answer = await text({
       message: "Where's the repository?",
-      placeholder: "github:user/repo",
-      validate: (value) => GITHUB_REPOSITORY.test(value) ? undefined : "Use github:user/repo",
+      placeholder: "github:owner/repo or https://github.com/owner/repo",
+      validate: (value) => normalizeGitHubRepository(value) ? undefined : "Use github:owner/repo or a GitHub URL",
     });
     if (cancelled(answer)) return stopSetup();
-    repository = answer.slice("github:".length);
+    repository = normalizeGitHubRepository(answer) as string;
   }
 
   const suggestedCheckout = defaultCheckout(domain, home);
-  const checkout = initial.checkout ?? await text({
+  const checkoutAnswer = initial.checkout ?? await text({
     message: "Where should deployments live?",
     placeholder: suggestedCheckout,
-    defaultValue: suggestedCheckout,
-    validate: (value) => isAbsolute(value) ? undefined : "Use an absolute path",
+    validate: (value) => isAbsolute(value || suggestedCheckout) ? undefined : "Use an absolute path",
   });
-  if (cancelled(checkout)) return stopSetup();
+  if (cancelled(checkoutAnswer)) return stopSetup();
+  const checkout = checkoutAnswer || suggestedCheckout;
 
-  const port = initial.hostPort === undefined
+  const portAnswer = initial.hostPort === undefined
     ? await text({
         message: "Which local port should Caddy use?",
-        defaultValue: "9100",
+        placeholder: "9100",
         validate: (value) => {
-          const parsed = Number(value);
+          const parsed = Number(value || "9100");
           return Number.isInteger(parsed) && parsed >= 1024 && parsed <= 65_535
             ? undefined
             : "Use an integer between 1024 and 65535";
         },
       })
     : String(initial.hostPort);
-  if (cancelled(port)) return stopSetup();
+  if (cancelled(portAnswer)) return stopSetup();
+  const port = portAnswer || "9100";
 
   return {
     ...initial,
@@ -266,16 +267,17 @@ async function promptForCaddy(answers: SetupAnswers): Promise<CaddyApplyRequest 
     });
     if (cancelled(logChoice)) return stopSetup();
     logs = logChoice as boolean;
-    const aliasChoice = await text({
+    const suggestedAliases = aliases.join(", ");
+    const aliasAnswer = await text({
       message: "Domain aliases (comma-separated, optional)",
-      defaultValue: aliases.join(", "),
+      placeholder: suggestedAliases,
       validate: (value) => {
         const values = value.split(",").map((alias) => alias.trim()).filter(Boolean);
         return values.every((alias) => DOMAIN.test(alias) && alias !== answers.domain) ? undefined : "Use public hostnames separated by commas";
       },
     });
-    if (cancelled(aliasChoice)) return stopSetup();
-    aliases = aliasChoice.split(",").map((alias) => alias.trim()).filter(Boolean);
+    if (cancelled(aliasAnswer)) return stopSetup();
+    aliases = (aliasAnswer || suggestedAliases).split(",").map((alias) => alias.trim()).filter(Boolean);
     if (aliases.length > 0) {
       const aliasModeChoice = await select({
         message: "Alias behavior",

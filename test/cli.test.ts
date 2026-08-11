@@ -29,7 +29,7 @@ test("CLI help documents interactive installation, pinned installation, and app 
   expect(result.stdout).toContain("--dry-run");
   expect(result.stdout).toContain("client-config");
   expect(result.stdout).toContain("status <app-id>");
-  expect(result.stdout).toContain("--repository <github:owner/repo> \\");
+  expect(result.stdout).toContain("--repository <repository> \\");
   expect(result.stdout).not.toContain("\x1b[");
   expect(result.stderr).toBe("");
 });

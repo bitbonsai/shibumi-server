@@ -1,3 +1,5 @@
+import { normalizeGitHubRepository } from "./repository";
+
 export type CliCommand =
   | { name: "help" }
   | { name: "version" }
@@ -56,7 +58,7 @@ ${heading("APPS")}
       Add or preview an app interactively
 
   ${command("shibumi-server add <domain> \\")}
-    ${command("--repository <github:owner/repo> \\")}
+    ${command("--repository <repository> \\")}
     ${command("--checkout <absolute-path> \\")}
     ${command("--port <port> [--dry-run] [options] \\")}
     ${command("[-- <test-command...>]")}
@@ -71,6 +73,7 @@ ${heading("OPERATIONS")}
   ${command("shibumi-server serve --config <path>")}
 
 ${heading("ADD OPTIONS")}
+  ${command("--repository <repository>")}       github:owner/repo or GitHub URL
   ${command("--dry-run")}                     Preview without changing system
   ${command("--ref <refs/heads/main>")}        Git branch ref
   ${command("--compose-file <path>")}          Compose file inside checkout
@@ -181,6 +184,9 @@ export function parseCliArgs(argv: string[]): CliCommand {
       "--service",
       "--health-path",
     ]));
+    const repositoryValue = values.get("--repository");
+    const repository = repositoryValue === undefined ? undefined : normalizeGitHubRepository(repositoryValue);
+    if (repositoryValue !== undefined && !repository) fail("--repository must use github:owner/repo or https://github.com/owner/repo");
     const portValue = values.get("--port");
     if (portValue !== undefined && !/^\d+$/.test(portValue)) fail("--port must be an integer");
     const composeFrontend = values.get("--compose-command");
@@ -192,7 +198,7 @@ export function parseCliArgs(argv: string[]): CliCommand {
       name,
       domain,
       dryRun,
-      repository: values.get("--repository")?.replace(/^github:/, ""),
+      repository,
       checkout: values.get("--checkout"),
       hostPort: portValue === undefined ? undefined : Number(portValue),
       testCommand,

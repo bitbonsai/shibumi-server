@@ -80,6 +80,21 @@ describe("CLI arguments", () => {
     });
   });
 
+  test("accepts GitHub repository URLs", () => {
+    expect(parseCliArgs([
+      "add", "example.com",
+      "--repository", "https://github.com/owner/repo.git",
+      "--checkout", "/srv/apps/example",
+      "--port", "9100",
+    ])).toMatchObject({ repository: "owner/repo" });
+    expect(() => parseCliArgs([
+      "add", "example.com",
+      "--repository", "https://example.com/owner/repo",
+      "--checkout", "/srv/apps/example",
+      "--port", "9100",
+    ])).toThrow("GitHub");
+  });
+
   test("allows interactive app registration and dry-run previews", () => {
     expect(parseCliArgs(["add", "sub.example.com", "--dry-run"])).toMatchObject({
       name: "add",
