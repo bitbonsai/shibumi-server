@@ -17,7 +17,11 @@ export interface DnsResolver {
   resolveNs(domain: string): Promise<string[]>;
 }
 
-const systemResolver: DnsResolver = { resolve4, resolve6, resolveNs };
+const systemResolver: DnsResolver = {
+  resolve4: (domain) => resolve4(domain),
+  resolve6: (domain) => resolve6(domain),
+  resolveNs: (domain) => resolveNs(domain),
+};
 
 async function optional<T>(operation: Promise<T>, fallback: T): Promise<T> {
   try {

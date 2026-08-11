@@ -153,9 +153,11 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}, home = h
     repository = answer.slice("github:".length);
   }
 
+  const suggestedCheckout = defaultCheckout(domain, home);
   const checkout = initial.checkout ?? await text({
     message: "Where should deployments live?",
-    defaultValue: defaultCheckout(domain, home),
+    placeholder: suggestedCheckout,
+    defaultValue: suggestedCheckout,
     validate: (value) => isAbsolute(value) ? undefined : "Use an absolute path",
   });
   if (cancelled(checkout)) return stopSetup();
