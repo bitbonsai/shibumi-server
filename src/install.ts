@@ -12,6 +12,7 @@ export interface InstallationPaths {
   config: string;
   secrets: string;
   dataDirectory: string;
+  statusDirectory: string;
   releasesDirectory: string;
   currentRelease: string;
   binDirectory: string;
@@ -39,12 +40,50 @@ export interface AddAppOptions {
   composeCommand?: string[];
   service?: string;
   healthPath?: string;
+  caddyMode?: "preserve" | "managed";
 }
 
 export interface AddAppResult {
   appId: string;
   secretEnvironmentVariable: string;
   config: ServerConfig;
+}
+
+export interface CheckoutManager {
+  prepare(options: Pick<AddAppOptions, "repository" | "ref" | "checkout" | "composeFile">): Promise<void>;
+}
+
+export class GitCheckoutManager implements CheckoutManager {
+  constructor(private readonly runner: CommandRunner = new BunCommandRunner()) {}
+
+  async prepare(options: Pick<AddAppOptions, "repository" | "ref" | "checkout" | "composeFile">): Promise<void> {
+    if (!await exists(options.checkout)) {
+      await mkdir(dirname(options.checkout), { recursive: true, mode: 0o700 });
+      const branch = (options.ref ?? "refs/heads/main").slice("refs/heads/".length);
+      const clone = await this.runner.run("git", [
+        "clone", "--branch", branch, "--single-branch", `https://github.com/${options.repository}.git`, options.checkout,
+      ], { capture: true, timeoutMs: 120_000 });
+      if (clone.exitCode !== 0) {
+        throw new Error(`cannot clone ${options.repository}; configure server Git access for private repositories, then clone it into ${options.checkout}`);
+      }
+    }
+    const origin = await this.runner.run("git", ["-C", options.checkout, "remote", "get-url", "origin"], { capture: true });
+    if (origin.exitCode !== 0) throw new Error(`checkout ${options.checkout} is not a Git repository with an origin`);
+    const expected = options.repository.toLowerCase();
+    const actual = origin.stdout.trim().toLowerCase().replace(/\.git$/, "");
+    if (!actual.endsWith(`/${expected}`) && !actual.endsWith(`:${expected}`)) {
+      throw new Error(`checkout origin does not match ${options.repository}`);
+    }
+    const access = await this.runner.run("git", [
+      "-C", options.checkout, "ls-remote", "--exit-code", "origin", options.ref ?? "refs/heads/main",
+    ], { capture: true, timeoutMs: 30_000 });
+    if (access.exitCode !== 0) {
+      throw new Error(`server cannot fetch ${options.repository}; configure a read-only deploy key or Git credential, then rerun add`);
+    }
+    if (!await exists(resolve(options.checkout, options.composeFile ?? "compose.yaml"))) {
+      throw new Error(`checkout is missing ${options.composeFile ?? "compose.yaml"}`);
+    }
+  }
 }
 
 export interface ServiceManager {
@@ -92,6 +131,7 @@ export function installationPaths(home: string): InstallationPaths {
     config: join(configDirectory, "config.json"),
     secrets: join(configDirectory, "secrets.env"),
     dataDirectory,
+    statusDirectory: join(dataDirectory, "status"),
     releasesDirectory: join(dataDirectory, "releases"),
     currentRelease: join(dataDirectory, "current"),
     binDirectory: join(home, ".local", "bin"),
@@ -177,6 +217,7 @@ export async function initializeInstallation(
   await mkdir(paths.configDirectory, { recursive: true, mode: 0o700 });
   await chmod(paths.configDirectory, 0o700);
   await mkdir(paths.releasesDirectory, { recursive: true, mode: 0o700 });
+  await mkdir(paths.statusDirectory, { recursive: true, mode: 0o700 });
   await mkdir(paths.binDirectory, { recursive: true, mode: 0o700 });
   await mkdir(paths.systemdDirectory, { recursive: true, mode: 0o700 });
 
@@ -263,6 +304,7 @@ function sameApp(left: AppConfig, right: AppConfig): boolean {
 export async function addApp(
   options: AddAppOptions,
   services: ServiceManager = new SystemdUserServiceManager(),
+  checkouts: CheckoutManager = new GitCheckoutManager(),
 ): Promise<AddAppResult> {
   const paths = installationPaths(resolve(options.home));
   if (!await exists(paths.currentRelease) || !await exists(paths.service)) {
@@ -287,6 +329,7 @@ export async function addApp(
     apps: {
       ...(apps as Record<string, unknown>),
       [appId]: {
+        domain: options.domain,
         repository: options.repository,
         ref: options.ref ?? "refs/heads/main",
         checkout: options.checkout,
@@ -304,6 +347,7 @@ export async function addApp(
         healthAttempts: 20,
         healthIntervalMs: 500,
         retainedRollbackImages: 2,
+        caddyMode: options.caddyMode,
       },
     },
   };
@@ -316,6 +360,7 @@ export async function addApp(
   if (options.dryRun) return { appId, secretEnvironmentVariable, config: parsed };
 
   if (existing === undefined) {
+    await checkouts.prepare(options);
     const secrets = await readFile(paths.secrets, "utf8");
     const existingSecret = new RegExp(`^${secretEnvironmentVariable}=([^\\r\\n]*)$`, "m").exec(secrets)?.[1];
     if (existingSecret !== undefined && !/^[a-f0-9]{64}$/.test(existingSecret)) {
@@ -331,4 +376,19 @@ export async function addApp(
 
   await services.enableAndRestart();
   return { appId, secretEnvironmentVariable, config: parsed };
+}
+
+export async function markCaddyManaged(home: string, appId: string): Promise<void> {
+  const paths = installationPaths(resolve(home));
+  const root = await rawConfig(paths.config);
+  const apps = root.apps;
+  if (!apps || typeof apps !== "object" || Array.isArray(apps)) throw new Error("config.apps must be an object");
+  const app = (apps as Record<string, unknown>)[appId];
+  if (!app || typeof app !== "object" || Array.isArray(app)) throw new Error(`unknown app: ${appId}`);
+  const candidate = {
+    ...root,
+    apps: { ...apps as Record<string, unknown>, [appId]: { ...app as Record<string, unknown>, caddyMode: "managed" } },
+  };
+  parseConfig(candidate);
+  await atomicWrite(paths.config, `${JSON.stringify(candidate, null, 2)}\n`, 0o600);
 }

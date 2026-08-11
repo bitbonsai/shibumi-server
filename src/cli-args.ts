@@ -3,6 +3,9 @@ export type CliCommand =
   | { name: "version" }
   | { name: "setup" }
   | { name: "check" | "serve"; config: string }
+  | { name: "client-config"; appId: string; serverHostname?: string }
+  | { name: "webhook-secret" | "caddy-cutover"; appId: string }
+  | { name: "status"; appId: string; commit?: string; json: boolean }
   | { name: "init" }
   | { name: "uninstall"; purge: boolean; yes: boolean }
   | {
@@ -29,6 +32,10 @@ export const usageText = `Usage:
   shibumi-server uninstall [--purge [--yes]]
   shibumi-server add <domain> [--dry-run] Add or preview an app interactively
   shibumi-server add <domain> --repository <github:owner/repo> --checkout <absolute-path> --port <port> [--dry-run] [options] [-- <test-command...>]
+  shibumi-server client-config <app-id> [--server-hostname <host>]
+  shibumi-server webhook-secret <app-id>   Print secret JSON for secure SSH handoff
+  shibumi-server caddy-cutover <app-id>     Switch a migrated domain after first healthy deploy
+  shibumi-server status <app-id> [--commit <sha>] [--json]
   shibumi-server check --config <path>
   shibumi-server serve --config <path>
 
@@ -94,6 +101,27 @@ export function parseCliArgs(argv: string[]): CliCommand {
   if (name === "check" || name === "serve") {
     const values = optionValues(args, new Set(["--config"]));
     return { name, config: required(values, "--config") };
+  }
+
+  if (name === "client-config") {
+    const appId = args.shift();
+    if (!appId || appId.startsWith("--")) fail("client-config requires an app id");
+    const values = optionValues(args, new Set(["--server-hostname"]));
+    return { name, appId, serverHostname: values.get("--server-hostname") };
+  }
+
+  if (name === "webhook-secret" || name === "caddy-cutover") {
+    if (args.length !== 1 || args[0].startsWith("--")) fail(`${name} requires an app id`);
+    return { name, appId: args[0] };
+  }
+
+  if (name === "status") {
+    const appId = args.shift();
+    if (!appId || appId.startsWith("--")) fail("status requires an app id");
+    const jsonCount = args.filter((arg) => arg === "--json").length;
+    if (jsonCount > 1) fail("option may only be used once: --json");
+    const values = optionValues(args.filter((arg) => arg !== "--json"), new Set(["--commit"]));
+    return { name, appId, commit: values.get("--commit"), json: jsonCount === 1 };
   }
 
   if (name === "add") {

@@ -57,7 +57,8 @@ describe("configuration", () => {
     expect(() => parseConfig(config({ composeFile: "../../etc/passwd" }))).toThrow("inside checkout");
   });
 
-  test("rejects unsafe refs", () => {
+  test("rejects unsafe refs and Caddy state", () => {
     expect(() => parseConfig(config({ ref: "refs/heads/../../bad" }))).toThrow("safe refs/heads");
+    expect(() => parseConfig(config({ caddyMode: "root" }))).toThrow("preserve or managed");
   });
 });

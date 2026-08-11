@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { addApp, appIdForDomain, initializeInstallation, installationPaths, SystemdUserServiceManager, uninstallInstallation, type ServiceManager } from "../src/install";
+import { addApp, appIdForDomain, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, SystemdUserServiceManager, uninstallInstallation, type CheckoutManager, type ServiceManager } from "../src/install";
 import packageJson from "../package.json";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
 
@@ -18,6 +18,8 @@ async function temporaryHome(): Promise<string> {
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
+
+const checkouts: CheckoutManager = { async prepare() {} };
 
 class FakeServices implements ServiceManager {
   reloads = 0;
@@ -163,7 +165,7 @@ describe("app registration", () => {
     const result = await addApp(appOptions(home, {
       composeCommand: ["podman-compose"],
       testCommand: ["bun", "test"],
-    }), services);
+    }), services, checkouts);
     const paths = installationPaths(home);
 
     expect(result.appId).toBe("example-com");
@@ -190,7 +192,7 @@ describe("app registration", () => {
     const configBefore = await readFile(paths.config, "utf8");
     const secretsBefore = await readFile(paths.secrets, "utf8");
 
-    const result = await addApp(appOptions(home, { dryRun: true }), services);
+    const result = await addApp(appOptions(home, { dryRun: true }), services, checkouts);
 
     expect(result.appId).toBe("example-com");
     expect(result.config.apps["example-com"].hostPort).toBe(9_100);
@@ -199,13 +201,24 @@ describe("app registration", () => {
     expect(services.restarts).toBe(0);
   });
 
+  test("marks a staged Caddy migration as managed after cutover", async () => {
+    const home = await temporaryHome();
+    const { services } = await initialized(home);
+    await addApp(appOptions(home, { caddyMode: "preserve" }), services, checkouts);
+
+    await markCaddyManaged(home, "example-com");
+
+    const config = JSON.parse(await readFile(installationPaths(home).config, "utf8"));
+    expect(config.apps["example-com"].caddyMode).toBe("managed");
+  });
+
   test("is idempotent for the same app and does not rotate its secret", async () => {
     const home = await temporaryHome();
     const { services } = await initialized(home);
-    await addApp(appOptions(home), services);
+    await addApp(appOptions(home), services, checkouts);
     const before = await readFile(installationPaths(home).secrets, "utf8");
 
-    await addApp(appOptions(home), services);
+    await addApp(appOptions(home), services, checkouts);
 
     expect(await readFile(installationPaths(home).secrets, "utf8")).toBe(before);
     expect(services.restarts).toBe(2);
@@ -217,7 +230,7 @@ describe("app registration", () => {
     const existing = "b".repeat(64);
     await writeFile(installationPaths(home).secrets, `SHIBUMI_SECRET_EXAMPLE_COM=${existing}\n`);
 
-    await addApp(appOptions(home), services);
+    await addApp(appOptions(home), services, checkouts);
 
     expect(await readFile(installationPaths(home).secrets, "utf8")).toBe(`SHIBUMI_SECRET_EXAMPLE_COM=${existing}\n`);
   });
@@ -225,26 +238,26 @@ describe("app registration", () => {
   test("rejects conflicting registrations and unsafe local values", async () => {
     const home = await temporaryHome();
     const { services } = await initialized(home);
-    await addApp(appOptions(home), services);
+    await addApp(appOptions(home), services, checkouts);
 
-    await expect(addApp(appOptions(home, { hostPort: 9_101 }), services)).rejects.toThrow("different settings");
-    await expect(addApp(appOptions(home, { domain: "not-a-domain" }), services)).rejects.toThrow("public hostname");
-    await expect(addApp(appOptions(home, { checkout: "relative/path" }), services)).rejects.toThrow("absolute path");
-    await expect(addApp(appOptions(home, { healthPath: "//other-host/path" }), services)).rejects.toThrow("health path");
+    await expect(addApp(appOptions(home, { hostPort: 9_101 }), services, checkouts)).rejects.toThrow("different settings");
+    await expect(addApp(appOptions(home, { domain: "not-a-domain" }), services, checkouts)).rejects.toThrow("public hostname");
+    await expect(addApp(appOptions(home, { checkout: "relative/path" }), services, checkouts)).rejects.toThrow("absolute path");
+    await expect(addApp(appOptions(home, { healthPath: "//other-host/path" }), services, checkouts)).rejects.toThrow("health path");
   });
 
   test("requires init and rejects ports already assigned to another app", async () => {
     const uninitialized = await temporaryHome();
-    await expect(addApp(appOptions(uninitialized), new FakeServices())).rejects.toThrow("run init first");
+    await expect(addApp(appOptions(uninitialized), new FakeServices(), checkouts)).rejects.toThrow("run init first");
 
     const home = await temporaryHome();
     const { services } = await initialized(home);
-    await addApp(appOptions(home), services);
+    await addApp(appOptions(home), services, checkouts);
     await expect(addApp(appOptions(home, {
       domain: "second.example",
       repository: "owner/second",
       checkout: "/srv/shibumi/apps/second-example",
-    }), services)).rejects.toThrow("assigned more than once");
+    }), services, checkouts)).rejects.toThrow("assigned more than once");
   });
 });
 
@@ -257,6 +270,45 @@ class FakeRunner implements CommandRunner {
     return this.results.shift() ?? { exitCode: 0, stdout: "", stderr: "" };
   }
 }
+
+describe("Git checkout preparation", () => {
+  test("accepts a matching existing checkout with Compose config", async () => {
+    const root = await temporaryHome();
+    const checkout = join(root, "app");
+    await mkdir(checkout, { recursive: true });
+    await Bun.write(join(checkout, "compose.yaml"), "services: {}\n");
+    const runner = new FakeRunner();
+    runner.results = [
+      { exitCode: 0, stdout: "git@github.com:owner/repository.git\n", stderr: "" },
+      { exitCode: 0, stdout: `${"a".repeat(40)}\trefs/heads/main\n`, stderr: "" },
+    ];
+
+    await new GitCheckoutManager(runner).prepare({
+      repository: "owner/repository",
+      checkout,
+      composeFile: "compose.yaml",
+    });
+
+    expect(runner.calls).toEqual([
+      ["git", "-C", checkout, "remote", "get-url", "origin"],
+      ["git", "-C", checkout, "ls-remote", "--exit-code", "origin", "refs/heads/main"],
+    ]);
+  });
+
+  test("rejects a mismatched checkout origin", async () => {
+    const root = await temporaryHome();
+    const checkout = join(root, "app");
+    await mkdir(checkout, { recursive: true });
+    const runner = new FakeRunner();
+    runner.results = [{ exitCode: 0, stdout: "https://github.com/other/repository.git\n", stderr: "" }];
+
+    await expect(new GitCheckoutManager(runner).prepare({
+      repository: "owner/repository",
+      checkout,
+      composeFile: "compose.yaml",
+    })).rejects.toThrow("does not match");
+  });
+});
 
 describe("systemd service management", () => {
   test("reloads, enables, and restarts the pinned user service", async () => {

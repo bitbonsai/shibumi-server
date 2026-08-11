@@ -1,9 +1,14 @@
-import { cancel, confirm, intro, isCancel, outro, spinner, text } from "@clack/prompts";
+import { cancel, confirm, intro, isCancel, log, note, outro, select, spinner, text } from "@clack/prompts";
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { createServer } from "node:net";
 import { isAbsolute, join, resolve } from "node:path";
+import { loadConfig } from "./config";
 import { BunCommandRunner, type CommandRunner } from "./deploy";
-import { addApp, appIdForDomain, initializeInstallation, installationPaths, type AddAppOptions } from "./install";
+import { checkDomainDns, detectPublicAddresses } from "./domain";
+import { detectCaddySite, type CaddySiteOptions, type Compression, type HeaderProfile, type Indexing } from "./caddy";
+import { applyCaddyWithSudo, authorizeCaddySudo, type CaddyApplyRequest } from "./caddy-sudo";
+import { addApp, appIdForDomain, initializeInstallation, installationPaths, markCaddyManaged, type AddAppOptions } from "./install";
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -51,8 +56,8 @@ export async function setupRequirementIssues(
   return issues;
 }
 
-export function defaultCheckout(domain: string): string {
-  return join("/srv/shibumi/apps", appIdForDomain(domain));
+export function defaultCheckout(domain: string, home: string): string {
+  return join(home, ".local", "share", "shibumi", "apps", appIdForDomain(domain));
 }
 
 function portAvailable(port: number): Promise<boolean> {
@@ -75,7 +80,7 @@ export async function nextAvailablePort(
   throw new Error(`no available port found from ${first} to 65535`);
 }
 
-async function automaticPort(home: string): Promise<number> {
+async function automaticPort(home: string, domain?: string): Promise<number> {
   const paths = installationPaths(home);
   let value: unknown;
   try {
@@ -88,6 +93,13 @@ async function automaticPort(home: string): Promise<number> {
     : undefined;
   const apps = root?.apps;
   if (!apps || typeof apps !== "object" || Array.isArray(apps)) throw new Error("config.apps must be an object");
+  if (domain) {
+    const existing = (apps as Record<string, unknown>)[appIdForDomain(domain)];
+    if (existing && typeof existing === "object" && !Array.isArray(existing)) {
+      const port = (existing as { hostPort?: unknown }).hostPort;
+      if (Number.isInteger(port)) return port as number;
+    }
+  }
   const used = new Set(
     Object.values(apps)
       .map((app) => app && typeof app === "object" && !Array.isArray(app) ? (app as { hostPort?: unknown }).hostPort : undefined)
@@ -109,7 +121,7 @@ function stopSetup(): undefined {
   return undefined;
 }
 
-export async function promptForApp(initial: Partial<SetupAnswers> = {}): Promise<SetupAnswers | undefined> {
+export async function promptForApp(initial: Partial<SetupAnswers> = {}, home = homedir()): Promise<SetupAnswers | undefined> {
   if (initial.domain !== undefined && !DOMAIN.test(initial.domain)) {
     throw new Error("domain must be a lowercase public hostname such as example.com");
   }
@@ -143,7 +155,7 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}): Promise
 
   const checkout = initial.checkout ?? await text({
     message: "Where should deployments live?",
-    defaultValue: defaultCheckout(domain),
+    defaultValue: defaultCheckout(domain, home),
     validate: (value) => isAbsolute(value) ? undefined : "Use an absolute path",
   });
   if (cancelled(checkout)) return stopSetup();
@@ -161,14 +173,6 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}): Promise
       })
     : String(initial.hostPort);
   if (cancelled(port)) return stopSetup();
-
-  const accepted = await confirm({
-    message: initial.dryRun
-      ? `Preview ${domain} without making changes?`
-      : `Add ${domain} to shibumi-server?`,
-    initialValue: true,
-  });
-  if (cancelled(accepted) || !accepted) return stopSetup();
 
   return {
     ...initial,
@@ -189,6 +193,121 @@ export async function confirmPurge(): Promise<boolean> {
     return false;
   }
   return true;
+}
+
+async function promptForCaddy(answers: SetupAnswers): Promise<CaddyApplyRequest | undefined> {
+  const detected = await detectCaddySite(answers.domain);
+  const choice = await select({
+    message: detected.exists ? `Existing Caddy site detected (${detected.upstreams.join(", ") || "custom upstream"})` : "Domain configuration",
+    options: detected.exists ? [
+      { value: "preserve", label: "Keep current config", hint: "recommended; add Shibumi webhook route only" },
+      { value: "rewrite", label: "Rewrite with recommended defaults" },
+      { value: "custom", label: "Customize replacement…" },
+    ] : [
+      { value: "new", label: "Recommended defaults", hint: "zstd + gzip, indexing allowed, safe headers, rotated logs" },
+      { value: "custom", label: "Customize…" },
+    ],
+  });
+  if (cancelled(choice)) return stopSetup();
+  if (detected.exists && choice !== "preserve") {
+    note([
+      `Current upstreams: ${detected.upstreams.join(", ") || "custom"}`,
+      `Current compression: ${detected.compression ? "enabled" : "not detected"}`,
+      `Current headers: ${detected.headers ? "custom" : "not detected"}`,
+      `Current logs: ${detected.logs ? "enabled" : "disabled"}`,
+      "Replacement removes directives outside the selected Shibumi settings. A backup is created before validation and reload.",
+    ].join("\n"), "Existing Caddy settings");
+  }
+
+  let compression: Compression = "zstd-gzip";
+  let indexing: Indexing = "allow";
+  let headers: HeaderProfile = "safe";
+  let logs = true;
+  let aliases = detected.aliases;
+  let aliasMode: "redirect" | "serve" = "redirect";
+  if (choice === "custom") {
+    const compressionChoice = await select({
+      message: "Compression",
+      options: [
+        { value: "zstd-gzip", label: "Zstd + gzip", hint: "recommended" },
+        { value: "zstd", label: "Zstd only" },
+        { value: "gzip", label: "Gzip only" },
+        { value: "off", label: "Disabled" },
+      ],
+    });
+    if (cancelled(compressionChoice)) return stopSetup();
+    compression = compressionChoice as Compression;
+    const indexingChoice = await select({
+      message: "Search indexing",
+      options: [
+        { value: "allow", label: "Allow indexing" },
+        { value: "private", label: "Private from search", hint: "not access control" },
+      ],
+    });
+    if (cancelled(indexingChoice)) return stopSetup();
+    indexing = indexingChoice as Indexing;
+    const headerChoice = await select({
+      message: "Safe headers",
+      options: [
+        { value: "safe", label: "Enabled", hint: "recommended" },
+        { value: "off", label: "Disabled" },
+      ],
+    });
+    if (cancelled(headerChoice)) return stopSetup();
+    headers = headerChoice as HeaderProfile;
+    const logChoice = await select({
+      message: "Rotated JSON access logs",
+      options: [
+        { value: true, label: "Enabled", hint: "10MB × 5" },
+        { value: false, label: "Disabled" },
+      ],
+    });
+    if (cancelled(logChoice)) return stopSetup();
+    logs = logChoice as boolean;
+    const aliasChoice = await text({
+      message: "Domain aliases (comma-separated, optional)",
+      defaultValue: aliases.join(", "),
+      validate: (value) => {
+        const values = value.split(",").map((alias) => alias.trim()).filter(Boolean);
+        return values.every((alias) => DOMAIN.test(alias) && alias !== answers.domain) ? undefined : "Use public hostnames separated by commas";
+      },
+    });
+    if (cancelled(aliasChoice)) return stopSetup();
+    aliases = aliasChoice.split(",").map((alias) => alias.trim()).filter(Boolean);
+    if (aliases.length > 0) {
+      const aliasModeChoice = await select({
+        message: "Alias behavior",
+        options: [
+          { value: "redirect", label: "Redirect aliases to primary", hint: "recommended" },
+          { value: "serve", label: "Serve the app on every hostname" },
+        ],
+      });
+      if (cancelled(aliasModeChoice)) return stopSetup();
+      aliasMode = aliasModeChoice as "redirect" | "serve";
+    }
+  }
+
+  const site: CaddySiteOptions = {
+    domain: answers.domain,
+    appId: appIdForDomain(answers.domain),
+    appPort: answers.hostPort,
+    webhookPort: 8787,
+    compression,
+    indexing,
+    headers,
+    logs,
+    aliases,
+    aliasMode,
+  };
+  const mode = choice === "custom" ? (detected.exists ? "rewrite" : "new") : choice;
+  const accepted = await confirm({
+    message: answers.dryRun
+      ? `Preview ${answers.domain} without writing config, secrets, or Caddy files?`
+      : `Add ${answers.domain} and apply ${mode} Caddy config? sudo will ask before Caddy changes.`,
+    initialValue: true,
+  });
+  if (cancelled(accepted) || !accepted) return stopSetup();
+  return { version: 1, action: "apply", mode: mode as CaddyApplyRequest["mode"], site };
 }
 
 export async function runInteractiveSetup(options: {
@@ -231,24 +350,128 @@ export async function runInteractiveSetup(options: {
   ].join("\n"));
 }
 
+export async function runCaddyCutover(home: string, appId: string): Promise<void> {
+  intro("渋み  Caddy cutover");
+  const paths = installationPaths(home);
+  const config = await loadConfig(paths.config);
+  const app = config.apps[appId];
+  if (!app) throw new Error(`unknown app: ${appId}`);
+  if (!app.domain) throw new Error(`app ${appId} has no domain`);
+  if (app.caddyMode !== "preserve") {
+    outro(`${app.domain} already uses its Shibumi upstream.`);
+    return;
+  }
+  const accepted = await confirm({
+    message: `Switch ${app.domain} to healthy upstream 127.0.0.1:${app.hostPort}? sudo will validate and reload Caddy.`,
+    initialValue: true,
+  });
+  if (cancelled(accepted) || !accepted) return stopSetup();
+  await authorizeCaddySudo();
+  await applyCaddyWithSudo({
+    version: 1,
+    action: "apply",
+    mode: "cutover",
+    site: {
+      domain: app.domain,
+      appId,
+      appPort: app.hostPort,
+      webhookPort: config.listen.port,
+    },
+  });
+  await markCaddyManaged(home, appId);
+  outro(`Caddy now routes ${app.domain} to 127.0.0.1:${app.hostPort}.`);
+}
+
 export async function runInteractiveAdd(options: { home: string } & Partial<SetupAnswers>): Promise<void> {
   intro("渋み  add an app");
-  const { home, ...initial } = options;
-  const hostPort = initial.hostPort ?? await automaticPort(home);
-  const answers = await promptForApp({ ...initial, hostPort });
+  const { home, ...provided } = options;
+  let existing: Partial<SetupAnswers> = {};
+  if (provided.domain) {
+    try {
+      const app = (await loadConfig(installationPaths(home).config)).apps[appIdForDomain(provided.domain)];
+      if (app) existing = {
+        domain: provided.domain,
+        repository: app.repository,
+        checkout: app.checkout,
+        hostPort: app.hostPort,
+        ref: app.ref,
+        composeFile: app.composeFile,
+        composeCommand: app.composeCommand,
+        service: app.service,
+        healthPath: new URL(app.healthUrl).pathname,
+        testCommand: app.testCommand,
+      };
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("apps must contain at least one app")) throw error;
+    }
+  }
+  const initial = { ...existing, ...provided };
+  if (initial.domain) {
+    const progress = spinner();
+    progress.start(`Checking DNS for ${initial.domain}`);
+    const publicAddresses = await detectPublicAddresses();
+    const dns = await checkDomainDns(initial.domain, publicAddresses);
+    if (dns.state === "missing") {
+      progress.stop("DNS is not configured", 1);
+      const cloudflare = dns.nameservers.some((server) => server.endsWith(".cloudflare.com"));
+      cancel([
+        `Add DNS for ${initial.domain}, then rerun this command.`,
+        ...(publicAddresses.length > 0
+          ? publicAddresses.map((address) => `${address.includes(":") ? "AAAA" : "A"}  ${initial.domain}  ${address}`)
+          : ["Public server address could not be detected; add the VPS address manually."]),
+        ...(cloudflare ? ["Cloudflare dashboard: https://dash.cloudflare.com/"] : []),
+      ].join("\n"));
+      return;
+    }
+    progress.stop(dns.state === "ready" ? "DNS points to this server" : `DNS detected (${dns.state})`);
+    if (dns.state === "elsewhere") {
+      const migrate = await confirm({
+        message: `${initial.domain} resolves elsewhere. Prepare a staged migration to this server?`,
+        initialValue: false,
+      });
+      if (cancelled(migrate) || !migrate) return stopSetup();
+    }
+  }
+  const hostPort = initial.hostPort ?? await automaticPort(home, initial.domain);
+  const answers = await promptForApp({ ...initial, hostPort }, home);
   if (!answers) return;
+  if (!answers.healthPath) {
+    try {
+      const compose = await readFile(join(answers.checkout, answers.composeFile ?? "compose.yaml"), "utf8");
+      answers.healthPath = /https?:\/\/(?:127\.0\.0\.1|localhost):\d+(\/[^\s"'\\]*)/.exec(compose)?.[1] ?? "/healthz";
+      log.info(`Health path ${answers.healthPath} (${answers.healthPath === "/healthz" ? "default" : "detected from Compose"})`);
+    } catch {
+      answers.healthPath = "/healthz";
+      log.info("Health path /healthz (default)");
+    }
+  }
+  const caddy = await promptForCaddy(answers);
+  if (!caddy) return;
+  if (caddy.site.aliases?.length) {
+    const expected = await detectPublicAddresses();
+    const activeAliases: string[] = [];
+    for (const alias of caddy.site.aliases) {
+      const status = await checkDomainDns(alias, expected);
+      if (status.state === "ready" || status.state === "cloudflare") activeAliases.push(alias);
+      else log.warn(`Skipping alias ${alias}: DNS is not ready`);
+    }
+    caddy.site.aliases = activeAliases;
+  }
+  if (!answers.dryRun) await authorizeCaddySudo();
 
   const action = answers.dryRun ? "preview" : "add";
   const progress = spinner();
   progress.start(`${answers.dryRun ? "Previewing" : "Adding"} ${answers.domain}`);
   let app;
   try {
-    app = await addApp({ home, ...answers });
+    app = await addApp({ home, ...answers, caddyMode: caddy.mode === "preserve" ? "preserve" : "managed" });
     progress.stop(`${answers.dryRun ? "Previewed" : "Added"} ${answers.domain}`);
   } catch (error) {
     progress.stop(`Failed to ${action} ${answers.domain}`, 1);
     throw error;
   }
+
+  if (!answers.dryRun) await applyCaddyWithSudo(caddy);
 
   const paths = installationPaths(home);
   outro(answers.dryRun ? [
@@ -257,11 +480,14 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
     `Webhook URL: https://${answers.domain}/hooks/github/${app.appId}`,
     `Webhook secret variable: ${app.secretEnvironmentVariable}`,
     `Caddy upstream: 127.0.0.1:${answers.hostPort}`,
-    "Preview complete. No changes made.",
+    `Caddy mode: ${caddy.mode}`,
+    "Preview complete. No changes made. Sudo was not used.",
   ].join("\n") : [
     `Webhook URL: https://${answers.domain}/hooks/github/${app.appId}`,
     `Webhook secret: ${app.secretEnvironmentVariable} in ${paths.secrets}`,
     `Caddy upstream: 127.0.0.1:${answers.hostPort}`,
-    "Next: add the Caddy route and GitHub webhook.",
+    "Caddy configuration applied and reloaded.",
+    `Client config: shibumi-server client-config ${app.appId} --server-hostname <ssh-host>`,
+    "Next on your project machine: bun run ship. It downloads shibumi-server.json and configures the GitHub webhook.",
   ].join("\n"));
 }

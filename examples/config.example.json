@@ -6,6 +6,7 @@
   },
   "apps": {
     "myapp": {
+      "domain": "example.com",
       "repository": "owner/repository",
       "ref": "refs/heads/main",
       "checkout": "/srv/shibumi/apps/myapp",
@@ -21,7 +22,8 @@
       "buildTimeoutMs": 600000,
       "healthAttempts": 20,
       "healthIntervalMs": 500,
-      "retainedRollbackImages": 2
+      "retainedRollbackImages": 2,
+      "caddyMode": "managed"
     }
   }
 }

@@ -3,21 +3,23 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import packageJson from "../package.json";
+import { createClientConfig, readWebhookSecret } from "./client-config";
 import { parseCliArgs, usageText } from "./cli-args";
 import { loadConfig, validateSecrets } from "./config";
 import { addApp, initializeInstallation, installationPaths, uninstallInstallation } from "./install";
 import { WebhookService } from "./server";
+import { DeploymentStatusStore } from "./status";
 import { warnIfUpdateAvailable } from "./update";
 
 function requireLinux(): void {
   if (process.platform !== "linux") throw new Error("init and add require Linux with a systemd user session");
 }
 
-async function serve(configPath: string): Promise<void> {
+async function serve(configPath: string, statusDirectory: string): Promise<void> {
   const config = await loadConfig(configPath);
   validateSecrets(config);
 
-  const service = new WebhookService(config);
+  const service = new WebhookService(config, { statusStore: new DeploymentStatusStore(statusDirectory) });
   const server = Bun.serve({
     hostname: config.listen.hostname,
     port: config.listen.port,
@@ -73,6 +75,25 @@ try {
     if (command.purge) console.log("Removed local config and webhook secrets.");
     else console.log(`Preserved config and secrets in ${paths.configDirectory}.`);
     console.log("App checkouts, containers, Caddy, and GitHub settings were not changed.");
+  } else if (command.name === "caddy-cutover") {
+    requireLinux();
+    const { runCaddyCutover } = await import("./setup");
+    await runCaddyCutover(homedir(), command.appId);
+  } else if (command.name === "client-config") {
+    const paths = installationPaths(homedir());
+    console.log(JSON.stringify(await createClientConfig(
+      paths.config,
+      command.appId,
+      command.serverHostname ? async () => command.serverHostname as string : undefined,
+    ), null, 2));
+  } else if (command.name === "webhook-secret") {
+    const paths = installationPaths(homedir());
+    console.log(JSON.stringify({ secret: await readWebhookSecret(paths.config, paths.secrets, command.appId) }));
+  } else if (command.name === "status") {
+    const status = await new DeploymentStatusStore(installationPaths(homedir()).statusDirectory).read(command.appId, command.commit);
+    if (command.json) console.log(JSON.stringify(status ?? null));
+    else if (status) console.log(`${status.appId} ${status.commit} ${status.state} ${status.stage}${status.message ? `: ${status.message}` : ""}`);
+    else console.log(`No deployment status for ${command.appId}${command.commit ? ` at ${command.commit}` : ""}.`);
   } else if (command.name === "add") {
     requireLinux();
     const { name: _, ...options } = command;
@@ -103,14 +124,12 @@ try {
       const { runInteractiveAdd } = await import("./setup");
       await runInteractiveAdd({ home: homedir(), ...options });
     }
-  } else {
+  } else if (command.name === "check") {
     const config = await loadConfig(command.config);
     validateSecrets(config);
-    if (command.name === "check") {
-      console.log(`Configuration is valid for ${Object.keys(config.apps).length} app(s).`);
-    } else {
-      await serve(command.config);
-    }
+    console.log(`Configuration is valid for ${Object.keys(config.apps).length} app(s).`);
+  } else if (command.name === "serve") {
+    await serve(command.config, installationPaths(homedir()).statusDirectory);
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));

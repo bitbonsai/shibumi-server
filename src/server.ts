@@ -1,8 +1,9 @@
 import type { ServerConfig } from "./config";
 import { DeliveryCache } from "./deliveries";
-import { defaultDeployDependencies, deploy, type DeployDependencies, type DeploymentLogger } from "./deploy";
+import { defaultDeployDependencies, deploy, DeploymentError, type DeployDependencies, type DeploymentLogger } from "./deploy";
 import { isGitHubSignature, normalizeGitHubDeliveryId, parseGitHubPush, verifyGitHubSignature } from "./github";
 import { AppLocks } from "./locks";
+import { DeploymentStatusStore, type DeploymentState } from "./status";
 
 class BodyTooLargeError extends Error {}
 
@@ -44,6 +45,7 @@ export interface WebhookServiceOptions {
   deployDependencies?: DeployDependencies;
   deliveries?: DeliveryCache;
   logger?: DeploymentLogger;
+  statusStore?: DeploymentStatusStore;
 }
 
 export class WebhookService {
@@ -52,6 +54,7 @@ export class WebhookService {
   readonly #deployDependencies: DeployDependencies;
   readonly #deliveries: DeliveryCache;
   readonly #logger: DeploymentLogger;
+  readonly #statusStore?: DeploymentStatusStore;
   readonly #tasks = new Set<Promise<void>>();
 
   constructor(
@@ -63,6 +66,26 @@ export class WebhookService {
     this.#logger = options.logger ?? console;
     this.#deployDependencies = options.deployDependencies ?? defaultDeployDependencies(this.#logger);
     this.#deliveries = options.deliveries ?? new DeliveryCache();
+    this.#statusStore = options.statusStore;
+  }
+
+  async #writeStatus(appId: string, commit: string, state: DeploymentState, stage: string, message?: string): Promise<void> {
+    if (!this.#statusStore) return;
+    try {
+      await this.#statusStore.write({
+        appId,
+        commit,
+        state,
+        stage,
+        message,
+        url: this.config.apps[appId]?.domain ? `https://${this.config.apps[appId].domain}` : undefined,
+      });
+    } catch (error) {
+      this.#logger.error("cannot write deployment status", {
+        app: appId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   async handle(request: Request): Promise<Response> {
@@ -135,9 +158,25 @@ export class WebhookService {
     }
 
     this.#deliveries.remember(appId, deliveryId);
-    const task = deploy(appId, app, push.commit, this.#deployDependencies)
-      .catch((error) => {
+    await this.#writeStatus(appId, push.commit, "accepted", "accepted");
+    const dependencies: DeployDependencies = {
+      ...this.#deployDependencies,
+      onStage: async (stage) => {
+        await this.#deployDependencies.onStage?.(stage);
+        await this.#writeStatus(appId, push.commit, "running", stage);
+      },
+    };
+    const task = deploy(appId, app, push.commit, dependencies)
+      .then(() => this.#writeStatus(appId, push.commit, "succeeded", "shipped"))
+      .catch(async (error) => {
         this.#deliveries.forget(appId, deliveryId);
+        await this.#writeStatus(
+          appId,
+          push.commit,
+          "failed",
+          error instanceof DeploymentError ? error.stage : "unknown",
+          error instanceof DeploymentError ? `${error.stage} failed` : "deployment failed",
+        );
         this.#logger.error("deployment failed", {
           app: appId,
           commit: push.commit,

@@ -2,7 +2,7 @@
 
 Small, secure webhook deployments for a VPS running rootless Podman.
 
-> Experimental: release `0.1.4` is being dogfooded.
+> Experimental: release `0.1.6` is being dogfooded.
 
 ## How it works
 
@@ -74,19 +74,19 @@ Add the first app, or another one later, with the installed command:
 shibumi-server add example.com
 ```
 
-Interactive app setup asks for the repository and deployment directory, then assigns the first available loopback port from `9100`. Add `--dry-run` to run the same prompts and validation, then preview the app ID, checkout, webhook URL, secret variable, and Caddy upstream without writing config or secrets or changing systemd. A real add generates a unique 32-byte webhook secret and enables the user service. Neither mode modifies Caddy or GitHub.
+Interactive app setup checks DNS, detects an existing Caddy site, asks for the repository and deployment directory, then assigns the first available loopback port from `9100`. Recommended Caddy settings enable Zstd with gzip fallback, indexing, safe baseline headers, and bounded JSON logs; Custom exposes each setting. Existing sites preserve their current block by default, with explicit rewrite available. Add `--dry-run` to follow the same detection, prompts, port selection, and validation without writing config or secrets, invoking sudo, or changing Caddy or systemd. A real add prepares the Git checkout, generates a unique 32-byte webhook secret, enables the user service, and asks sudo only when its constrained helper validates and reloads Caddy. GitHub remains unchanged until the client ship script configures its webhook.
 
 For scripts and unattended setup, pin the bootstrap release and provide every app value explicitly:
 
 ```bash
-bunx shibumi-server@0.1.4 init
+bunx shibumi-server@0.1.6 init
 shibumi-server add example.com \
   --repository github:owner/repository \
   --checkout /srv/shibumi/apps/example-com \
   --port 9100
 ```
 
-`init` stores the release under `~/.local/share/shibumi-server/releases/0.1.4`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
+`init` stores the release under `~/.local/share/shibumi-server/releases/0.1.6`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
 
 Uninstall the service, launcher, and installed releases while preserving machine config and webhook secrets:
 
@@ -95,6 +95,15 @@ shibumi-server uninstall
 ```
 
 `shibumi-server uninstall --purge` also deletes config and webhook secrets after confirmation. Automation must make that irreversible choice explicit with `--purge --yes`. Neither mode removes app checkouts, containers, Caddy routes, or GitHub settings.
+
+Export commit-safe client configuration and inspect deployment status over SSH:
+
+```bash
+shibumi-server client-config example-com --server-hostname server.example.com
+shibumi-server status example-com --commit <full-sha> --json
+```
+
+`client-config` contains app identity and routing metadata but no webhook secret, credentials, checkout path, or local SSH alias. `webhook-secret` exists only for an explicit SSH-to-`gh` handoff and prints JSON to stdout so clients can keep it in memory. Deployment status files are mode-restricted and updated atomically as webhook work moves through preflight, checkout, build, startup, and health stages.
 
 Every user-run command checks npm for a newer stable release with a short timeout. When one exists, it prints the reviewed installer command; registry failures never block local work. Hosts with the standalone Compose frontend add `--compose-command podman-compose`. Optional flags configure the branch ref, Compose file, service, and health path. Run `shibumi-server --help` for the full syntax. Add the webhook route before the site's normal handler, then copy the secret from the mode-`0600` file into GitHub's webhook settings.
 

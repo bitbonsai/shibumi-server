@@ -44,6 +44,7 @@ export interface DeployDependencies {
   fetch: Fetcher;
   sleep(milliseconds: number): Promise<void>;
   logger: DeploymentLogger;
+  onStage?(stage: string): void | Promise<void>;
 }
 
 export class DeploymentError extends Error {
@@ -131,6 +132,7 @@ async function runChecked(
   args: string[],
   options: CommandOptions = {},
 ): Promise<CommandResult> {
+  await dependencies.onStage?.(stage);
   dependencies.logger.info("deployment stage started", { stage });
   const result = await dependencies.runner.run(command, args, options);
   if (result.timedOut) {
@@ -262,6 +264,7 @@ async function retainReleaseImages(
 
 export async function deploy(appId: string, app: AppConfig, commit: string, dependencies: DeployDependencies): Promise<void> {
   const startedAt = Date.now();
+  await dependencies.onStage?.("preflight");
   await checkResources(app, dependencies);
   const git = (args: string[], stage: string, capture = false) =>
     runChecked(dependencies, stage, "git", ["-C", app.checkout, ...args], { capture });
@@ -304,6 +307,7 @@ export async function deploy(appId: string, app: AppConfig, commit: string, depe
     );
   }
   await runChecked(dependencies, "start", composeExecutable, [...compose, "up", "-d", "--remove-orphans"], options);
+  await dependencies.onStage?.("health");
   await waitForHealth(app, dependencies);
   await retainReleaseImages(appId, app, commit, startedAt, composeExecutable, compose, options, dependencies);
 

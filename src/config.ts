@@ -7,6 +7,7 @@ export interface ListenConfig {
 }
 
 export interface AppConfig {
+  domain?: string;
   repository: string;
   ref: string;
   checkout: string;
@@ -24,6 +25,7 @@ export interface AppConfig {
   healthAttempts: number;
   healthIntervalMs: number;
   retainedRollbackImages: number;
+  caddyMode?: "preserve" | "managed";
 }
 
 export interface ServerConfig {
@@ -32,6 +34,7 @@ export interface ServerConfig {
 }
 
 const APP_ID = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const ENVIRONMENT_VARIABLE = /^[A-Z_][A-Z0-9_]*$/;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -140,7 +143,11 @@ export function parseConfig(value: unknown): ServerConfig {
       throw new Error(`apps.${appId}.healthUrl must use hostPort ${hostPort}`);
     }
 
+    const domain = appValue.domain === undefined ? undefined : string(appValue.domain, `apps.${appId}.domain`);
+    if (domain !== undefined && !DOMAIN.test(domain)) throw new Error(`apps.${appId}.domain must be a lowercase public hostname`);
+
     const app: AppConfig = {
+      domain,
       repository,
       ref: parseRef(appValue.ref, `apps.${appId}.ref`),
       checkout,
@@ -175,6 +182,11 @@ export function parseConfig(value: unknown): ServerConfig {
         0,
         10,
       ),
+      caddyMode: appValue.caddyMode === undefined
+        ? undefined
+        : appValue.caddyMode === "preserve" || appValue.caddyMode === "managed"
+          ? appValue.caddyMode
+          : (() => { throw new Error(`apps.${appId}.caddyMode must be preserve or managed`); })(),
     };
     composePath(app);
     apps[appId] = app;

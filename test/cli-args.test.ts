@@ -18,6 +18,22 @@ describe("CLI arguments", () => {
     expect(parseCliArgs(["uninstall", "--purge", "--yes"])).toEqual({ name: "uninstall", purge: true, yes: true });
   });
 
+  test("parses client config, secret handoff, and deployment status", () => {
+    expect(parseCliArgs(["client-config", "example-com", "--server-hostname", "server.example.com"])).toEqual({
+      name: "client-config",
+      appId: "example-com",
+      serverHostname: "server.example.com",
+    });
+    expect(parseCliArgs(["webhook-secret", "example-com"])).toEqual({ name: "webhook-secret", appId: "example-com" });
+    expect(parseCliArgs(["caddy-cutover", "example-com"])).toEqual({ name: "caddy-cutover", appId: "example-com" });
+    expect(parseCliArgs(["status", "example-com", "--commit", "a".repeat(40), "--json"])).toEqual({
+      name: "status",
+      appId: "example-com",
+      commit: "a".repeat(40),
+      json: true,
+    });
+  });
+
   test("parses check and serve config paths", () => {
     expect(parseCliArgs(["check", "--config", "/tmp/config.json"])).toEqual({
       name: "check",
@@ -88,6 +104,8 @@ describe("CLI arguments", () => {
     expect(() => parseCliArgs(["uninstall", "--yes"])).toThrow("requires --purge");
     expect(() => parseCliArgs(["uninstall", "--purge", "--purge"])).toThrow("only be used once");
     expect(() => parseCliArgs(["check"])).toThrow("--config");
+    expect(() => parseCliArgs(["client-config"])).toThrow("app id");
+    expect(() => parseCliArgs(["status", "example-com", "--json", "--json"])).toThrow("only be used once");
     expect(() => parseCliArgs(["check", "--config", "a", "--config", "b"])).toThrow("only be used once");
     expect(() => parseCliArgs(["add", "example.com", "--dry-run", "--dry-run"])).toThrow("only be used once");
     expect(() => parseCliArgs([
