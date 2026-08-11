@@ -2,7 +2,7 @@
 
 Small, secure webhook deployments for a VPS running rootless Podman.
 
-> Experimental: release `0.1.17` is being dogfooded.
+> Experimental: release `0.1.20` is being dogfooded.
 
 ## How it works
 
@@ -74,19 +74,19 @@ Add the first app, or another one later, with the installed command:
 shibumi-server add example.com
 ```
 
-Interactive app setup retries transient DNS failures, falls back to the server's system resolver, distinguishes unavailable lookups from confirmed missing records, detects an existing Caddy site, accepts `github:owner/repo` or a pasted GitHub URL, suggests a user-owned checkout under `~/www`, then assigns the first available loopback port from `9100`. Recommended Caddy settings enable Zstd with gzip fallback, indexing, safe baseline headers, and bounded JSON logs; Custom exposes each setting. Existing sites preserve their current block by default, with explicit rewrite available. Add `--dry-run` to follow the same detection, prompts, port selection, and validation without writing config or secrets, invoking sudo, or changing Caddy or systemd. A real add prepares the Git checkout, generates a unique 32-byte webhook secret, enables the user service, and asks sudo only when its constrained helper validates and reloads Caddy. GitHub remains unchanged until the client ship script configures its webhook.
+Interactive app setup retries transient DNS failures, falls back to the server's system resolver, distinguishes unavailable lookups from confirmed missing records, detects an existing Caddy site, accepts `github:owner/repo` or a pasted GitHub URL, suggests a user-owned checkout under `~/shibumi`, then assigns the first available loopback port from `9100`. Recommended Caddy settings enable Zstd with gzip fallback, indexing, safe baseline headers, and bounded JSON logs; Custom exposes each setting. Existing sites preserve their current block by default, with explicit rewrite available. Add `--dry-run` to follow the same detection, prompts, port selection, and validation without writing config or secrets, invoking sudo, or changing Caddy or systemd. A real add prepares the Git checkout, generates a unique 32-byte webhook secret, enables the user service, and asks sudo only when its constrained helper validates and reloads Caddy. GitHub remains unchanged until the client ship script configures its webhook.
 
 For scripts and unattended setup, pin the bootstrap release and provide every app value explicitly:
 
 ```bash
-bunx shibumi-server@0.1.17 init
+bunx shibumi-server@0.1.20 init
 shibumi-server add example.com \
   --repository github:owner/repository \
   --checkout /srv/shibumi/apps/example-com \
   --port 9100
 ```
 
-`init` stores the release under `~/.local/share/shibumi-server/releases/0.1.17`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
+`init` stores the release under `~/.local/share/shibumi-server/releases/0.1.20`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
 
 Uninstall the service, launcher, and installed releases while preserving machine config and webhook secrets:
 

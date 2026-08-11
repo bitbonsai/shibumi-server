@@ -39,9 +39,9 @@ describe("interactive setup", () => {
   });
 
   test("derives a collision-free default checkout from the domain", () => {
-    expect(defaultCheckout("www.example.com", "/home/user")).toBe("/home/user/www/www-example-com");
-    expect(defaultCheckout("something-some.org", "/home/user")).toBe("/home/user/www/something--some-org");
-    expect(defaultCheckout("something.some-org", "/home/user")).toBe("/home/user/www/something-some--org");
+    expect(defaultCheckout("www.example.com", "/home/user")).toBe("/home/user/shibumi/www-example-com");
+    expect(defaultCheckout("something-some.org", "/home/user")).toBe("/home/user/shibumi/something--some-org");
+    expect(defaultCheckout("something.some-org", "/home/user")).toBe("/home/user/shibumi/something-some--org");
   });
 
   test("assigns the first unassigned and locally available port", async () => {

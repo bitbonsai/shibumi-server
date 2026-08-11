@@ -56,7 +56,7 @@ export async function setupRequirementIssues(
 }
 
 export function defaultCheckout(domain: string, home: string): string {
-  return join(home, "www", appIdForDomain(domain));
+  return join(home, "shibumi", appIdForDomain(domain));
 }
 
 function portAvailable(port: number): Promise<boolean> {
@@ -304,14 +304,14 @@ async function promptForCaddy(answers: SetupAnswers): Promise<CaddyApplyRequest 
     aliasMode,
   };
   const mode = choice === "custom" ? (detected.exists ? "rewrite" : "new") : choice;
+  const request = { version: 1, action: "apply", mode: mode as CaddyApplyRequest["mode"], site } as const;
+  if (answers.dryRun) return request;
   const accepted = await confirm({
-    message: answers.dryRun
-      ? `Preview ${answers.domain} without writing config, secrets, or Caddy files?`
-      : `Add ${answers.domain} and apply ${mode} Caddy config? sudo will ask before Caddy changes.`,
+    message: `Add ${answers.domain} and apply ${mode} Caddy config? sudo will ask before Caddy changes.`,
     initialValue: true,
   });
   if (cancelled(accepted) || !accepted) return stopSetup();
-  return { version: 1, action: "apply", mode: mode as CaddyApplyRequest["mode"], site };
+  return request;
 }
 
 export async function runInteractiveSetup(options: {
