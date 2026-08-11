@@ -101,7 +101,7 @@ describe("pinned installation", () => {
     ]);
     expect(checkStderr).toBe("");
     expect(checkExit).toBe(0);
-    expect(checkStdout).toContain("Interactive installation");
+    expect(checkStdout).toContain("Guided installation");
 
     expect(services.reloads).toBe(1);
     expect(services.restarts).toBe(0);

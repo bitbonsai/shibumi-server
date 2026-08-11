@@ -19,14 +19,18 @@ async function cli(args: string[]) {
 test("CLI help documents interactive installation, pinned installation, and app registration", async () => {
   const result = await cli(["--help"]);
   expect(result.exitCode).toBe(0);
-  expect(result.stdout).toContain("Interactive installation");
+  expect(result.stdout).toContain("渋み  shibumi-server");
+  expect(result.stdout).toContain("Guided installation");
   expect(result.stdout).toContain("shibumi-server --version");
   expect(result.stdout).toContain("shibumi-server init");
+  expect(result.stdout).toContain("shibumi-server update");
   expect(result.stdout).toContain("shibumi-server uninstall");
   expect(result.stdout).toContain("shibumi-server add <domain>");
   expect(result.stdout).toContain("--dry-run");
   expect(result.stdout).toContain("client-config");
   expect(result.stdout).toContain("status <app-id>");
+  expect(result.stdout).toContain("--repository <github:owner/repo> \\");
+  expect(result.stdout).not.toContain("\x1b[");
   expect(result.stderr).toBe("");
 });
 

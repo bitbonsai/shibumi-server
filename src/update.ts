@@ -1,6 +1,6 @@
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const LATEST_URL = "https://registry.npmjs.org/shibumi-server/latest";
-const INSTALL_COMMAND = "curl -fsSL https://shibumistack.dev/install/server | bash";
+const UPDATE_COMMAND = "shibumi-server update";
 
 type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -19,23 +19,39 @@ export function isNewerVersion(current: string, candidate: string): boolean {
   return false;
 }
 
+async function latestVersion(fetcher: Fetcher, timeoutMs: number): Promise<string> {
+  const response = await fetcher(LATEST_URL, {
+    headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) throw new Error(`npm registry returned ${response.status}`);
+  const value: unknown = await response.json();
+  const latest = value && typeof value === "object" && "version" in value
+    ? (value as { version?: unknown }).version
+    : undefined;
+  if (typeof latest !== "string" || !VERSION.test(latest)) throw new Error("npm registry returned an invalid release version");
+  return latest;
+}
+
+export async function updateToLatest(
+  current: string,
+  install: (version: string) => Promise<number>,
+  fetcher: Fetcher = fetch,
+): Promise<{ updated: boolean; version: string }> {
+  const latest = await latestVersion(fetcher, 10_000);
+  if (!isNewerVersion(current, latest)) return { updated: false, version: current };
+  if (await install(latest) !== 0) throw new Error(`shibumi-server ${latest} installation failed`);
+  return { updated: true, version: latest };
+}
+
 export async function warnIfUpdateAvailable(
   current: string,
   fetcher: Fetcher = fetch,
   warn: (message: string) => void = console.warn,
 ): Promise<void> {
   try {
-    const response = await fetcher(LATEST_URL, {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(1_500),
-    });
-    if (!response.ok) return;
-    const value: unknown = await response.json();
-    const latest = value && typeof value === "object" && "version" in value
-      ? (value as { version?: unknown }).version
-      : undefined;
-    if (typeof latest !== "string" || !isNewerVersion(current, latest)) return;
-    warn(`Update available: shibumi-server ${current} → ${latest}\nRun: ${INSTALL_COMMAND}`);
+    const latest = await latestVersion(fetcher, 1_500);
+    if (isNewerVersion(current, latest)) warn(`Update available: shibumi-server ${current} → ${latest}\nRun: ${UPDATE_COMMAND}`);
   } catch {
     // Update checks never block local commands when the registry is unavailable.
   }

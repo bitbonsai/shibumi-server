@@ -1,7 +1,7 @@
 export type CliCommand =
   | { name: "help" }
   | { name: "version" }
-  | { name: "setup" }
+  | { name: "setup" | "update" }
   | { name: "check" | "serve"; config: string }
   | { name: "client-config"; appId: string; serverHostname?: string }
   | { name: "webhook-secret" | "caddy-cutover"; appId: string }
@@ -23,29 +23,65 @@ export type CliCommand =
       healthPath?: string;
     };
 
-export const usageText = `Usage:
-  shibumi-server --help                  Show help
-  shibumi-server --version               Show version
-  shibumi-server                         Interactive installation
-  shibumi-server setup                   Interactive installation
-  shibumi-server init                    Install only (automation)
-  shibumi-server uninstall [--purge [--yes]]
-  shibumi-server add <domain> [--dry-run] Add or preview an app interactively
-  shibumi-server add <domain> --repository <github:owner/repo> --checkout <absolute-path> --port <port> [--dry-run] [options] [-- <test-command...>]
-  shibumi-server client-config <app-id> [--server-hostname <host>]
-  shibumi-server webhook-secret <app-id>   Print secret JSON for secure SSH handoff
-  shibumi-server caddy-cutover <app-id>     Switch a migrated domain after first healthy deploy
-  shibumi-server status <app-id> [--commit <sha>] [--json]
-  shibumi-server check --config <path>
-  shibumi-server serve --config <path>
+const ansi = {
+  accent: "\x1b[38;5;208m",
+  bold: "\x1b[1m",
+  muted: "\x1b[38;5;245m",
+  reset: "\x1b[0m",
+};
 
-Add options:
-  --dry-run                          Preview validated settings without changing the system
-  --ref <refs/heads/main>             Git branch ref (default: refs/heads/main)
-  --compose-file <path>               Compose file inside checkout (default: compose.yaml)
-  --compose-command <frontend>        podman or podman-compose (default: podman)
-  --service <name>                    Compose service (default: web)
-  --health-path </healthz>            Loopback health path (default: /healthz)`;
+export function formatHelp(color = false): string {
+  const paint = (value: string, style: keyof typeof ansi) => color ? `${ansi[style]}${value}${ansi.reset}` : value;
+  const heading = (value: string) => paint(value, "accent");
+  const command = (value: string) => paint(value, "bold");
+  const detail = (value: string) => paint(value, "muted");
+
+  return `${paint("渋み", "accent")}  ${paint("shibumi-server", "bold")}
+${detail("Small, secure webhook deploys for rootless Podman.")}
+
+${heading("USAGE")}
+  ${command("shibumi-server")} [command]
+  ${command("shibumi-server --help")}                  Show help
+  ${command("shibumi-server --version")}               Show version
+
+${heading("SETUP")}
+  ${command("shibumi-server")}                         Guided installation
+  ${command("shibumi-server setup")}                   Guided installation
+  ${command("shibumi-server init")}                    Install only (automation)
+  ${command("shibumi-server update")}                  Install latest stable release
+  ${command("shibumi-server uninstall")} [--purge [--yes]]
+
+${heading("APPS")}
+  ${command("shibumi-server add <domain>")} [--dry-run]
+      Add or preview an app interactively
+
+  ${command("shibumi-server add <domain> \\")}
+    ${command("--repository <github:owner/repo> \\")}
+    ${command("--checkout <absolute-path> \\")}
+    ${command("--port <port> [--dry-run] [options] \\")}
+    ${command("[-- <test-command...>]")}
+      Add or preview an app with explicit settings
+
+${heading("OPERATIONS")}
+  ${command("shibumi-server status <app-id>")} [--commit <sha>] [--json]
+  ${command("shibumi-server caddy-cutover <app-id>")}
+  ${command("shibumi-server client-config <app-id>")} [--server-hostname <host>]
+  ${command("shibumi-server webhook-secret <app-id>")}
+  ${command("shibumi-server check --config <path>")}
+  ${command("shibumi-server serve --config <path>")}
+
+${heading("ADD OPTIONS")}
+  ${command("--dry-run")}                     Preview without changing system
+  ${command("--ref <refs/heads/main>")}        Git branch ref
+  ${command("--compose-file <path>")}          Compose file inside checkout
+  ${command("--compose-command <frontend>")}   podman or podman-compose
+  ${command("--service <name>")}               Compose service (default: web)
+  ${command("--health-path </healthz>")}        Loopback health path
+
+${detail("Docs: https://shibumistack.dev/server")}`;
+}
+
+export const usageText = formatHelp();
 
 function fail(message: string): never {
   throw new Error(`${message}\n\n${usageText}`);
@@ -85,8 +121,8 @@ export function parseCliArgs(argv: string[]): CliCommand {
     if (args.length > 0) fail("version does not accept arguments");
     return { name: "version" };
   }
-  if (name === "init") {
-    if (args.length > 0) fail("init does not accept arguments");
+  if (name === "init" || name === "update") {
+    if (args.length > 0) fail(`${name} does not accept arguments`);
     return { name };
   }
   if (name === "uninstall") {

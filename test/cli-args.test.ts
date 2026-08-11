@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { parseCliArgs } from "../src/cli-args";
+import { formatHelp, parseCliArgs } from "../src/cli-args";
 
 describe("CLI arguments", () => {
+  test("formats branded help with optional terminal color", () => {
+    expect(formatHelp()).toContain("渋み  shibumi-server");
+    expect(formatHelp()).not.toContain("\x1b[");
+    expect(formatHelp(true)).toContain("\x1b[38;5;208m渋み");
+  });
+
   test("parses help, version, and interactive setup", () => {
     expect(parseCliArgs(["--help"])).toEqual({ name: "help" });
     expect(parseCliArgs(["help"])).toEqual({ name: "help" });
@@ -10,6 +16,7 @@ describe("CLI arguments", () => {
     expect(parseCliArgs(["version"])).toEqual({ name: "version" });
     expect(parseCliArgs([])).toEqual({ name: "setup" });
     expect(parseCliArgs(["setup"])).toEqual({ name: "setup" });
+    expect(parseCliArgs(["update"])).toEqual({ name: "update" });
   });
 
   test("parses uninstall modes", () => {
@@ -101,6 +108,7 @@ describe("CLI arguments", () => {
     expect(() => parseCliArgs(["setup", "extra"])).toThrow("does not accept");
     expect(() => parseCliArgs(["version", "extra"])).toThrow("does not accept");
     expect(() => parseCliArgs(["init", "extra"])).toThrow("does not accept");
+    expect(() => parseCliArgs(["update", "extra"])).toThrow("does not accept");
     expect(() => parseCliArgs(["uninstall", "--yes"])).toThrow("requires --purge");
     expect(() => parseCliArgs(["uninstall", "--purge", "--purge"])).toThrow("only be used once");
     expect(() => parseCliArgs(["check"])).toThrow("--config");

@@ -4,15 +4,28 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import packageJson from "../package.json";
 import { createClientConfig, readWebhookSecret } from "./client-config";
-import { parseCliArgs, usageText } from "./cli-args";
+import { formatHelp, parseCliArgs, usageText } from "./cli-args";
 import { loadConfig, validateSecrets } from "./config";
 import { addApp, initializeInstallation, installationPaths, uninstallInstallation } from "./install";
 import { WebhookService } from "./server";
 import { DeploymentStatusStore } from "./status";
-import { warnIfUpdateAvailable } from "./update";
+import { updateToLatest, warnIfUpdateAvailable } from "./update";
 
 function requireLinux(): void {
-  if (process.platform !== "linux") throw new Error("init and add require Linux with a systemd user session");
+  if (process.platform !== "linux") throw new Error("init, update, and add require Linux with a systemd user session");
+}
+
+function supportsColor(): boolean {
+  return Boolean(process.stdout.isTTY && !("NO_COLOR" in process.env) && process.env.TERM !== "dumb");
+}
+
+async function installRelease(version: string): Promise<number> {
+  return Bun.spawn([process.execPath, "x", `shibumi-server@${version}`, "init"], {
+    env: { ...process.env, SHIBUMI_SKIP_UPDATE_CHECK: "1" },
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).exited;
 }
 
 async function serve(configPath: string, statusDirectory: string): Promise<void> {
@@ -39,12 +52,12 @@ async function serve(configPath: string, statusDirectory: string): Promise<void>
 
 try {
   const command = parseCliArgs(process.argv.slice(2));
-  if (command.name !== "serve" && process.env.SHIBUMI_SKIP_UPDATE_CHECK !== "1") {
+  if (!["help", "version", "serve", "update"].includes(command.name) && process.env.SHIBUMI_SKIP_UPDATE_CHECK !== "1") {
     await warnIfUpdateAvailable(packageJson.version);
   }
 
   if (command.name === "help") {
-    console.log(usageText);
+    console.log(formatHelp(supportsColor()));
   } else if (command.name === "version") {
     console.log(packageJson.version);
   } else if (command.name === "setup") {
@@ -55,6 +68,12 @@ try {
       packageRoot: resolve(import.meta.dir, ".."),
       bunExecutable: process.execPath,
     });
+  } else if (command.name === "update") {
+    requireLinux();
+    const result = await updateToLatest(packageJson.version, installRelease);
+    console.log(result.updated
+      ? `Updated shibumi-server to ${result.version}.`
+      : `shibumi-server ${result.version} is already current.`);
   } else if (command.name === "init") {
     requireLinux();
     const result = await initializeInstallation({
