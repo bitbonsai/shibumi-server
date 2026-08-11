@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import packageJson from "../package.json";
 import { createClientConfig, readWebhookSecret } from "./client-config";
-import { formatHelp, parseCliArgs, usageText } from "./cli-args";
+import { formatHelp, parseCliArgs } from "./cli-args";
 import { loadConfig, validateSecrets } from "./config";
 import { addApp, initializeInstallation, installationPaths, uninstallInstallation } from "./install";
 import { WebhookService } from "./server";
@@ -152,6 +152,5 @@ try {
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
-  if (!(error instanceof Error) || !error.message.includes("Usage:")) console.error(`\n${usageText}`);
   process.exit(1);
 }

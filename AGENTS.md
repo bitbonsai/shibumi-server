@@ -41,7 +41,9 @@ Use `SHIBUMI_COMPOSE_COMMAND=podman-compose` on hosts with the standalone Compos
 - Caddy changes require explicit confirmation before sudo handles the password directly. Keep the installed root helper constrained to schema-validated JSON over stdin, computed paths, loopback upstreams, fixed directives, bounded logs, atomic writes, full validation, reload, and rollback. Never accept arbitrary Caddy text, commands, paths, or upstream hosts.
 - Commit-safe `client-config` output must never include secrets, checkout paths, SSH users, local aliases, or credentials. Webhook secret handoff is JSON over explicit SSH and must not print in interactive prose. Status snapshots stay mode-restricted and expose no logs or secrets.
 - User-run CLI commands check the npm registry for newer stable releases, suggest `shibumi-server update` when outdated, and fail open on timeout or registry errors. Keep `serve` startup independent from this network check. Explicit update resolves one validated stable version, installs that exact npm release through Bun, and reuses idempotent `init` so config and secrets survive.
-- Release version digits must add up to one of Mauricio's preferred totals: `1`, `2`, `3`, `5`, `7`, or `9`. Enforce this in package tests; `0.1.20` is valid because its digits total `3`.
+- Release version digits must add up to one of Mauricio's preferred totals: `1`, `2`, `3`, `5`, `7`, or `9`. Enforce this in package tests; `0.1.22` is valid because its digits total `5`.
+- Every user-facing CLI failure includes a concrete `Next:` action or command. Syntax errors may show usage; operational failures never dump full help.
+- Existing clean app checkouts fast-forward to configured origin/ref during registration. Dirty, diverged, inaccessible, or source-incomplete checkouts fail with specific recovery; never reset or discard user work.
 - Normal unit tests must fake Git, Podman, and systemd. Real integration tests must use unique disposable projects and clean up.
 
 ## Public versus local

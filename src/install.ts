@@ -57,31 +57,53 @@ export class GitCheckoutManager implements CheckoutManager {
   constructor(private readonly runner: CommandRunner = new BunCommandRunner()) {}
 
   async prepare(options: Pick<AddAppOptions, "repository" | "ref" | "checkout" | "composeFile">): Promise<void> {
-    if (!await exists(options.checkout)) {
+    const existingCheckout = await exists(options.checkout);
+    if (!existingCheckout) {
       await mkdir(dirname(options.checkout), { recursive: true, mode: 0o700 });
       const branch = (options.ref ?? "refs/heads/main").slice("refs/heads/".length);
       const clone = await this.runner.run("git", [
         "clone", "--branch", branch, "--single-branch", `https://github.com/${options.repository}.git`, options.checkout,
       ], { capture: true, timeoutMs: 120_000 });
       if (clone.exitCode !== 0) {
-        throw new Error(`cannot clone ${options.repository}; configure server Git access for private repositories, then clone it into ${options.checkout}`);
+        throw new Error(`cannot clone ${options.repository}.\n\nNext: verify repository access, then rerun add. Private repositories need a read-only deploy key or Git credential on this server.`);
       }
     }
     const origin = await this.runner.run("git", ["-C", options.checkout, "remote", "get-url", "origin"], { capture: true });
-    if (origin.exitCode !== 0) throw new Error(`checkout ${options.checkout} is not a Git repository with an origin`);
+    if (origin.exitCode !== 0) throw new Error(`checkout ${options.checkout} is not a Git repository with an origin.\n\nNext: move it aside or choose another deployment path, then rerun add.`);
     const expected = options.repository.toLowerCase();
     const actual = origin.stdout.trim().toLowerCase().replace(/\.git$/, "");
     if (!actual.endsWith(`/${expected}`) && !actual.endsWith(`:${expected}`)) {
-      throw new Error(`checkout origin does not match ${options.repository}`);
+      throw new Error(`checkout origin does not match ${options.repository}.\n\nNext: choose the checkout for ${options.repository}, or fix its origin, then rerun add.`);
     }
     const access = await this.runner.run("git", [
       "-C", options.checkout, "ls-remote", "--exit-code", "origin", options.ref ?? "refs/heads/main",
     ], { capture: true, timeoutMs: 30_000 });
     if (access.exitCode !== 0) {
-      throw new Error(`server cannot fetch ${options.repository}; configure a read-only deploy key or Git credential, then rerun add`);
+      throw new Error(`server cannot fetch ${options.repository}.\n\nNext: configure a read-only deploy key or Git credential, then rerun add.`);
     }
-    if (!await exists(resolve(options.checkout, options.composeFile ?? "compose.yaml"))) {
-      throw new Error(`checkout is missing ${options.composeFile ?? "compose.yaml"}`);
+    const remoteCommit = access.stdout.trim().split(/\s+/)[0];
+    if (!/^[a-f0-9]{40}$/.test(remoteCommit)) throw new Error(`cannot resolve ${options.ref ?? "refs/heads/main"} on origin.\n\nNext: push that branch, then rerun add.`);
+
+    if (existingCheckout) {
+      const status = await this.runner.run("git", ["-C", options.checkout, "status", "--porcelain"], { capture: true });
+      if (status.exitCode !== 0 || status.stdout.trim()) {
+        throw new Error(`checkout has uncommitted changes.\n\nNext: commit and push them, or clean the checkout, then rerun add.`);
+      }
+      const fetch = await this.runner.run("git", ["-C", options.checkout, "fetch", "--quiet", "origin", options.ref ?? "refs/heads/main"], { capture: true, timeoutMs: 120_000 });
+      if (fetch.exitCode !== 0) throw new Error(`cannot update checkout from origin.\n\nNext: verify Git access and branch name, then rerun add.`);
+      const fetched = await this.runner.run("git", ["-C", options.checkout, "rev-parse", "FETCH_HEAD"], { capture: true });
+      if (fetched.exitCode !== 0 || !/^[a-f0-9]{40}$/.test(fetched.stdout.trim())) throw new Error(`cannot resolve fetched branch.\n\nNext: verify the branch on origin, then rerun add.`);
+      const merge = await this.runner.run("git", ["-C", options.checkout, "merge", "--ff-only", "FETCH_HEAD"], { capture: true, timeoutMs: 30_000 });
+      if (merge.exitCode !== 0) throw new Error(`checkout cannot fast-forward to origin.\n\nNext: push local commits or reset the checkout to origin, then rerun add.`);
+      const head = await this.runner.run("git", ["-C", options.checkout, "rev-parse", "HEAD"], { capture: true });
+      if (head.exitCode !== 0 || head.stdout.trim() !== fetched.stdout.trim()) {
+        throw new Error(`checkout does not match ${options.ref ?? "refs/heads/main"} on origin.\n\nNext: push local commits or reset the checkout to origin, then rerun add.`);
+      }
+    }
+
+    const composeFile = options.composeFile ?? "compose.yaml";
+    if (!await exists(resolve(options.checkout, composeFile))) {
+      throw new Error(`repository is missing ${composeFile}.\n\nNext: add ${composeFile}, commit, and push it; or rerun add with --compose-file <relative-path>.`);
     }
   }
 }

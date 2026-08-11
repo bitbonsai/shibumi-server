@@ -44,4 +44,5 @@ test("CLI rejects installation on hosts without systemd", async () => {
   const result = await cli(["init"]);
   expect(result.exitCode).toBe(1);
   expect(result.stderr).toContain("require Linux with a systemd user session");
+  expect(result.stderr).not.toContain("USAGE");
 });

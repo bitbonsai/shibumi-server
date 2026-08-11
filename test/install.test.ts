@@ -283,6 +283,11 @@ describe("Git checkout preparation", () => {
     runner.results = [
       { exitCode: 0, stdout: "git@github.com:owner/repository.git\n", stderr: "" },
       { exitCode: 0, stdout: `${"a".repeat(40)}\trefs/heads/main\n`, stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${"a".repeat(40)}\n`, stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${"a".repeat(40)}\n`, stderr: "" },
     ];
 
     await new GitCheckoutManager(runner).prepare({
@@ -294,7 +299,35 @@ describe("Git checkout preparation", () => {
     expect(runner.calls).toEqual([
       ["git", "-C", checkout, "remote", "get-url", "origin"],
       ["git", "-C", checkout, "ls-remote", "--exit-code", "origin", "refs/heads/main"],
+      ["git", "-C", checkout, "status", "--porcelain"],
+      ["git", "-C", checkout, "fetch", "--quiet", "origin", "refs/heads/main"],
+      ["git", "-C", checkout, "rev-parse", "FETCH_HEAD"],
+      ["git", "-C", checkout, "merge", "--ff-only", "FETCH_HEAD"],
+      ["git", "-C", checkout, "rev-parse", "HEAD"],
     ]);
+  });
+
+  test("gives a source-owned next step when Compose config is absent", async () => {
+    const root = await temporaryHome();
+    const checkout = join(root, "app");
+    await mkdir(checkout, { recursive: true });
+    const sha = "a".repeat(40);
+    const runner = new FakeRunner();
+    runner.results = [
+      { exitCode: 0, stdout: "https://github.com/owner/repository.git\n", stderr: "" },
+      { exitCode: 0, stdout: `${sha}\trefs/heads/main\n`, stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${sha}\n`, stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${sha}\n`, stderr: "" },
+    ];
+
+    await expect(new GitCheckoutManager(runner).prepare({
+      repository: "owner/repository",
+      checkout,
+      composeFile: "compose.yaml",
+    })).rejects.toThrow("Next: add compose.yaml, commit, and push it; or rerun add with --compose-file");
   });
 
   test("rejects a mismatched checkout origin", async () => {
