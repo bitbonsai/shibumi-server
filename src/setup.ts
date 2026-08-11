@@ -15,6 +15,21 @@ const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?
 
 export type SetupAnswers = Omit<AddAppOptions, "home">;
 
+export function formatReadySummary(options: {
+  domain: string;
+  appId: string;
+  hostPort: number;
+  caddy: "already configured" | "configured and reloaded" | "existing upstream preserved";
+}): string {
+  return [
+    `Domain    ${options.domain}`,
+    `Webhook   https://${options.domain}/hooks/github/${options.appId}`,
+    `Upstream  127.0.0.1:${options.hostPort}`,
+    `Caddy     ${options.caddy}`,
+    "Secret    stored on server",
+  ].join("\n");
+}
+
 type WhichCommand = (command: string) => string | null;
 
 export async function setupRequirementIssues(
@@ -390,6 +405,7 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
   intro("渋み  add an app");
   const { home, ...provided } = options;
   let existing: Partial<SetupAnswers> = {};
+  let existingCaddyMode: AddAppOptions["caddyMode"];
   if (provided.domain) {
     try {
       const app = (await loadConfig(installationPaths(home).config)).apps[appIdForDomain(provided.domain)];
@@ -405,6 +421,7 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
         healthPath: new URL(app.healthUrl).pathname,
         testCommand: app.testCommand,
       };
+      existingCaddyMode = app.caddyMode;
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("apps must contain at least one app")) throw error;
     }
@@ -459,9 +476,9 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
       log.info("Health path /healthz (default)");
     }
   }
-  const caddy = await promptForCaddy(answers);
-  if (!caddy) return;
-  if (caddy.site.aliases?.length) {
+  const caddy = existingCaddyMode ? undefined : await promptForCaddy(answers);
+  if (!existingCaddyMode && !caddy) return;
+  if (caddy?.site.aliases?.length) {
     const expected = await detectPublicAddresses();
     const activeAliases: string[] = [];
     for (const alias of caddy.site.aliases) {
@@ -472,37 +489,46 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
     }
     caddy.site.aliases = activeAliases;
   }
-  if (!answers.dryRun) await authorizeCaddySudo();
+  if (!answers.dryRun && caddy) await authorizeCaddySudo();
 
   const action = answers.dryRun ? "preview" : "add";
   const progress = spinner();
   progress.start(`${answers.dryRun ? "Previewing" : "Adding"} ${answers.domain}`);
   let app;
   try {
-    app = await addApp({ home, ...answers, caddyMode: caddy.mode === "preserve" ? "preserve" : "managed" });
+    app = await addApp({
+      home,
+      ...answers,
+      caddyMode: existingCaddyMode ?? (caddy?.mode === "preserve" ? "preserve" : "managed"),
+    });
     progress.stop(`${answers.dryRun ? "Previewed" : "Added"} ${answers.domain}`);
   } catch (error) {
     progress.stop(`Failed to ${action} ${answers.domain}`, 1);
     throw error;
   }
 
-  if (!answers.dryRun) await applyCaddyWithSudo(caddy);
+  if (!answers.dryRun && caddy) await applyCaddyWithSudo(caddy);
 
-  const paths = installationPaths(home);
-  outro(answers.dryRun ? [
-    `App ID: ${app.appId}`,
-    `Checkout: ${answers.checkout}`,
-    `Webhook URL: https://${answers.domain}/hooks/github/${app.appId}`,
-    `Webhook secret variable: ${app.secretEnvironmentVariable}`,
-    `Caddy upstream: 127.0.0.1:${answers.hostPort}`,
-    `Caddy mode: ${caddy.mode}`,
-    "Preview complete. No changes made. Sudo was not used.",
-  ].join("\n") : [
-    `Webhook URL: https://${answers.domain}/hooks/github/${app.appId}`,
-    `Webhook secret: ${app.secretEnvironmentVariable} in ${paths.secrets}`,
-    `Caddy upstream: 127.0.0.1:${answers.hostPort}`,
-    "Caddy configuration applied and reloaded.",
-    `Client config: shibumi-server client-config ${app.appId} --server-hostname <ssh-host>`,
-    "Next on your project machine: bun run ship. It downloads shibumi-server.json and configures the GitHub webhook.",
-  ].join("\n"));
+  if (answers.dryRun) {
+    outro([
+      `App ID: ${app.appId}`,
+      `Checkout: ${answers.checkout}`,
+      `Webhook URL: https://${answers.domain}/hooks/github/${app.appId}`,
+      `Webhook secret variable: ${app.secretEnvironmentVariable}`,
+      `Caddy upstream: 127.0.0.1:${answers.hostPort}`,
+      `Caddy mode: ${existingCaddyMode ?? caddy?.mode}`,
+      "Preview complete. No changes made. Sudo was not used.",
+    ].join("\n"));
+    return;
+  }
+
+  note(formatReadySummary({
+    domain: answers.domain,
+    appId: app.appId,
+    hostPort: answers.hostPort,
+    caddy: existingCaddyMode
+      ? "already configured"
+      : caddy?.mode === "preserve" ? "existing upstream preserved" : "configured and reloaded",
+  }), "App ready");
+  outro("Connect your project\n   https://shibumistack.dev/ship");
 }

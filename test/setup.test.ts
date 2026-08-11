@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
-import { defaultCheckout, nextAvailablePort, setupRequirementIssues } from "../src/setup";
+import { defaultCheckout, formatReadySummary, nextAvailablePort, setupRequirementIssues } from "../src/setup";
 
 class RequirementRunner implements CommandRunner {
   constructor(
@@ -42,6 +42,25 @@ describe("interactive setup", () => {
     expect(defaultCheckout("www.example.com", "/home/user")).toBe("/home/user/shibumi/www-example-com");
     expect(defaultCheckout("something-some.org", "/home/user")).toBe("/home/user/shibumi/something--some-org");
     expect(defaultCheckout("something.some-org", "/home/user")).toBe("/home/user/shibumi/something-some--org");
+  });
+
+  test("formats a concise ready summary without client placeholders or secret paths", () => {
+    const summary = formatReadySummary({
+      domain: "vibetoolbox.dev",
+      appId: "vibetoolbox-dev",
+      hostPort: 9_100,
+      caddy: "configured and reloaded",
+    });
+
+    expect(summary).toBe([
+      "Domain    vibetoolbox.dev",
+      "Webhook   https://vibetoolbox.dev/hooks/github/vibetoolbox-dev",
+      "Upstream  127.0.0.1:9100",
+      "Caddy     configured and reloaded",
+      "Secret    stored on server",
+    ].join("\n"));
+    expect(summary).not.toContain("<ssh-host>");
+    expect(summary).not.toContain("secrets.env");
   });
 
   test("assigns the first unassigned and locally available port", async () => {
