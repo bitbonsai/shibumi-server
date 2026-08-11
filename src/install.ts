@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { parseConfig, type AppConfig, type ServerConfig } from "./config";
 import { BunCommandRunner, type CommandRunner } from "./deploy";
 
-const PACKAGE_FILES = ["src", "docs", "examples", "README.md", "LICENSE", "package.json"];
+const PACKAGE_FILES = ["src", "docs", "examples", "README.md", "LICENSE", "package.json", "runtime-lock.json"];
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export interface InstallationPaths {
@@ -231,6 +231,15 @@ export async function initializeInstallation(
         if (!await exists(source)) throw new Error(`package is missing ${entry}`);
         await cp(source, join(staging, entry), { recursive: true });
       }
+      await rename(join(staging, "runtime-lock.json"), join(staging, "bun.lock"));
+      const dependencies = Bun.spawn([
+        bunExecutable, "install", "--frozen-lockfile", "--production", "--ignore-scripts",
+      ], { cwd: staging, stdin: "ignore", stdout: "ignore", stderr: "pipe" });
+      const [exitCode, stderr] = await Promise.all([
+        dependencies.exited,
+        new Response(dependencies.stderr).text(),
+      ]);
+      if (exitCode !== 0) throw new Error(stderr.trim() || "cannot install pinned runtime dependencies");
       await rename(staging, release);
     } finally {
       await rm(staging, { recursive: true, force: true }).catch(() => {});

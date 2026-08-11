@@ -2,7 +2,7 @@
 
 Small, secure webhook deployments for a VPS running rootless Podman.
 
-> Experimental: release `0.1.8` is being dogfooded.
+> Experimental: release `0.1.11` is being dogfooded.
 
 ## How it works
 
@@ -66,7 +66,7 @@ The first release targets Linux with Bun, Git, rootless Podman, Caddy, and a sys
 curl -fsSL https://shibumistack.dev/install/server | bash
 ```
 
-The Bash bootstrap installs Bun when needed, then runs interactive setup. Setup checks Git, Caddy, rootless Podman, and the systemd user session before changing server configuration. It copies the resolved release locally, creates mode-restricted config and secret files, writes a resource-limited systemd user service, and installs `shibumi-server` in `~/.local/bin`. The service stays pinned to that local release until you run an explicit upgrade. Make sure `~/.local/bin` is on `PATH`.
+The Bash bootstrap installs Bun when needed, then runs interactive setup. Setup checks Git, Caddy, rootless Podman, and the systemd user session before changing server configuration. It copies the resolved release locally, installs its lockfile-pinned production dependencies without lifecycle scripts, creates mode-restricted config and secret files, writes a resource-limited systemd user service, and installs `shibumi-server` in `~/.local/bin`. The service stays pinned to that local release until you run an explicit upgrade. Make sure `~/.local/bin` is on `PATH`.
 
 Add the first app, or another one later, with the installed command:
 
@@ -79,14 +79,14 @@ Interactive app setup checks DNS, detects an existing Caddy site, asks for the r
 For scripts and unattended setup, pin the bootstrap release and provide every app value explicitly:
 
 ```bash
-bunx shibumi-server@0.1.8 init
+bunx shibumi-server@0.1.11 init
 shibumi-server add example.com \
   --repository github:owner/repository \
   --checkout /srv/shibumi/apps/example-com \
   --port 9100
 ```
 
-`init` stores the release under `~/.local/share/shibumi-server/releases/0.1.8`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
+`init` stores the release under `~/.local/share/shibumi-server/releases/0.1.11`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
 
 Uninstall the service, launcher, and installed releases while preserving machine config and webhook secrets:
 

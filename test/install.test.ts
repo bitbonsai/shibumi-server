@@ -76,6 +76,8 @@ describe("pinned installation", () => {
     expect(launcher).toContain(`exec '${process.execPath}'`);
     expect((await stat(paths.launcher)).mode & 0o777).toBe(0o755);
     expect(await readFile(join(paths.currentRelease, "src", "cli.ts"), "utf8")).toContain("initializeInstallation");
+    expect(JSON.parse(await readFile(join(paths.currentRelease, "node_modules", "@clack", "prompts", "package.json"), "utf8")).name)
+      .toBe("@clack/prompts");
     expect(JSON.parse(await readFile(paths.config, "utf8"))).toEqual({
       listen: { hostname: "127.0.0.1", port: 8787, maxBodyBytes: 1_048_576 },
       apps: {},
