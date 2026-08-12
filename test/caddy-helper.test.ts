@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { findSiteBlock, preserveSite, rewriteSite } from "../src/caddy-helper";
+import { findSiteBlock, preserveSite, removeRouteImport, rewriteSite } from "../src/caddy-helper";
 
 const source = `{
     email admin@example.com
@@ -32,6 +32,13 @@ describe("Caddy source changes", () => {
     expect(changed).toContain("example.com {\n    import /etc/caddy/sites.d/example-com.routes\n    encode gzip");
     expect(preserveSite(changed, "example.com", "/etc/caddy/sites.d/example-com.routes")).toBe(changed);
     expect(changed).toContain("Content-Security-Policy");
+  });
+
+  test("removes only the selected Shibumi route import", () => {
+    const preserved = preserveSite(source, "example.com", "/etc/caddy/sites.d/example-com.routes");
+    const changed = removeRouteImport(preserved, "example-com");
+    expect(changed).toBe(source);
+    expect(changed).toContain("other.example.com");
   });
 
   test("rewrites only the selected site and enables managed fragments", () => {

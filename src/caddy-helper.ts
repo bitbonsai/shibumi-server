@@ -4,7 +4,7 @@ import { cp, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promi
 import { dirname, join } from "node:path";
 import { renderCaddyManagedSnippet, renderCaddySite, renderCaddyWebhookSnippet, type CaddySiteOptions } from "./caddy";
 
-const HELPER_VERSION = 1;
+const HELPER_VERSION = 2;
 const MAIN_CONFIG = "/etc/caddy/Caddyfile";
 const SITE_DIRECTORY = "/etc/caddy/sites.d";
 const BACKUP_DIRECTORY = "/var/lib/shibumi-server/caddy-backups";
@@ -20,6 +20,18 @@ interface ApplyRequest {
   mode: "new" | "preserve" | "rewrite" | "cutover";
   site: CaddySiteOptions;
 }
+
+interface RemoveRequest {
+  version: 1;
+  action: "remove";
+  appId: string;
+  domain: string;
+}
+
+type HelperRequest = ApplyRequest | RemoveRequest;
+
+const APP_ID = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 function withoutComment(line: string): string {
   let quoted = false;
@@ -113,9 +125,17 @@ function exactKeys(value: Record<string, unknown>, allowed: string[], label: str
   if (unknown) throw new Error(`${label} contains unknown field: ${unknown}`);
 }
 
-function parseRequest(value: unknown): ApplyRequest {
+function parseRequest(value: unknown): HelperRequest {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("request must be an object");
   const request = value as Record<string, unknown>;
+  if (request.action === "remove") {
+    exactKeys(request, ["version", "action", "appId", "domain"], "request");
+    if (request.version !== 1 || typeof request.appId !== "string" || !APP_ID.test(request.appId)
+      || typeof request.domain !== "string" || !DOMAIN.test(request.domain)) {
+      throw new Error("unsupported Caddy helper request");
+    }
+    return request as unknown as RemoveRequest;
+  }
   exactKeys(request, ["version", "action", "mode", "site"], "request");
   if (request.version !== 1 || request.action !== "apply" || !["new", "preserve", "rewrite", "cutover"].includes(String(request.mode))) {
     throw new Error("unsupported Caddy helper request");
@@ -165,6 +185,52 @@ async function install(): Promise<void> {
   await cp(join(import.meta.dir, "caddy.ts"), INSTALLED_RENDERER);
   await writeFile(INSTALLED_COMMAND, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(INSTALLED_SOURCE)} "$@"\n`, { mode: 0o755 });
   console.log(`Installed ${INSTALLED_COMMAND}`);
+}
+
+export function removeRouteImport(source: string, appId: string): string {
+  const routePath = join(SITE_DIRECTORY, `${appId}.routes`);
+  return source.split(/(?<=\n)/).filter((line) => withoutComment(line).trim() !== `import ${routePath}`).join("")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+async function removeApp(request: RemoveRequest): Promise<void> {
+  if (process.getuid?.() !== 0) throw new Error("Caddy helper requires root");
+  await mkdir(LOCK_DIRECTORY, { mode: 0o700 });
+  const sitePath = join(SITE_DIRECTORY, `${request.appId}.caddy`);
+  const routePath = join(SITE_DIRECTORY, `${request.appId}.routes`);
+  const timestamp = new Date().toISOString().replaceAll(":", "-");
+  const backup = join(BACKUP_DIRECTORY, `${request.appId}-remove-${timestamp}`);
+  let originalMain = "";
+  let originalSite: string | undefined;
+  let originalRoute: string | undefined;
+  try {
+    originalMain = await readFile(MAIN_CONFIG, "utf8");
+    originalSite = await readFile(sitePath, "utf8").catch(() => undefined);
+    originalRoute = await readFile(routePath, "utf8").catch(() => undefined);
+    if (originalSite === undefined && originalRoute === undefined && removeRouteImport(originalMain, request.appId) === originalMain) {
+      console.log(JSON.stringify({ ok: true, action: "remove", removed: false, domain: request.domain }));
+      return;
+    }
+    await mkdir(backup, { recursive: true, mode: 0o700 });
+    await writeFile(join(backup, "Caddyfile"), originalMain, { mode: 0o600 });
+    if (originalSite !== undefined) await writeFile(join(backup, `${request.appId}.caddy`), originalSite, { mode: 0o600 });
+    if (originalRoute !== undefined) await writeFile(join(backup, `${request.appId}.routes`), originalRoute, { mode: 0o600 });
+    const nextMain = removeRouteImport(originalMain, request.appId);
+    if (nextMain !== originalMain) await atomicWrite(MAIN_CONFIG, nextMain);
+    await rm(sitePath, { force: true });
+    await rm(routePath, { force: true });
+    await runCaddy(["validate", "--config", MAIN_CONFIG, "--adapter", "caddyfile"]);
+    await runCaddy(["reload", "--config", MAIN_CONFIG, "--adapter", "caddyfile"]);
+    console.log(JSON.stringify({ ok: true, action: "remove", domain: request.domain, backup }));
+  } catch (error) {
+    if (originalMain) await atomicWrite(MAIN_CONFIG, originalMain).catch(() => {});
+    if (originalSite !== undefined) await atomicWrite(sitePath, originalSite).catch(() => {});
+    if (originalRoute !== undefined) await atomicWrite(routePath, originalRoute).catch(() => {});
+    await runCaddy(["reload", "--config", MAIN_CONFIG, "--adapter", "caddyfile"]).catch(() => {});
+    throw error;
+  } finally {
+    await rm(LOCK_DIRECTORY, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 async function apply(request: ApplyRequest): Promise<void> {
@@ -225,7 +291,9 @@ if (import.meta.main) {
     else if (!argument) {
       const input = await new Response(Bun.stdin.stream()).text();
       if (input.length > 65_536) throw new Error("Caddy helper request is too large");
-      await apply(parseRequest(JSON.parse(input)));
+      const request = parseRequest(JSON.parse(input));
+      if (request.action === "remove") await removeApp(request);
+      else await apply(request);
     } else throw new Error("unknown Caddy helper argument");
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

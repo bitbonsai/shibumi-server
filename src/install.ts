@@ -49,6 +49,21 @@ export interface AddAppResult {
   config: ServerConfig;
 }
 
+export interface RegisteredApp {
+  appId: string;
+  domain: string;
+  repository: string;
+  checkout: string;
+  hostPort: number;
+  caddyMode?: "preserve" | "managed";
+}
+
+export interface RemoveAppResult {
+  app: RegisteredApp;
+  remainingApps: number;
+  containerWarning?: string;
+}
+
 export interface CheckoutManager {
   prepare(options: Pick<AddAppOptions, "repository" | "ref" | "checkout" | "composeFile">): Promise<void>;
 }
@@ -407,6 +422,70 @@ export async function addApp(
 
   await services.enableAndRestart();
   return { appId, secretEnvironmentVariable, config: parsed };
+}
+
+export async function registeredApps(home: string): Promise<RegisteredApp[]> {
+  const paths = installationPaths(resolve(home));
+  const root = await rawConfig(paths.config);
+  const rawApps = root.apps;
+  if (!rawApps || typeof rawApps !== "object" || Array.isArray(rawApps)) throw new Error("config.apps must be an object");
+  if (Object.keys(rawApps).length === 0) return [];
+  const apps = parseConfig(root).apps;
+  return Object.entries(apps).map(([appId, app]) => ({
+    appId,
+    domain: app.domain ?? appId,
+    repository: app.repository,
+    checkout: app.checkout,
+    hostPort: app.hostPort,
+    caddyMode: app.caddyMode,
+  })).sort((left, right) => left.domain.localeCompare(right.domain));
+}
+
+export async function removeApp(
+  home: string,
+  selector: string,
+  services: ServiceManager = new SystemdUserServiceManager(),
+  runner: CommandRunner = new BunCommandRunner(),
+): Promise<RemoveAppResult> {
+  const paths = installationPaths(resolve(home));
+  const root = await rawConfig(paths.config);
+  const parsed = parseConfig(root);
+  const match = Object.entries(parsed.apps).find(([appId, app]) => appId === selector || app.domain === selector);
+  if (!match) throw new Error(`unknown app: ${selector}.\n\nNext: run shibumi-server list and choose a domain or app ID.`);
+  const [appId, app] = match;
+  const appRecord: RegisteredApp = {
+    appId,
+    domain: app.domain ?? appId,
+    repository: app.repository,
+    checkout: app.checkout,
+    hostPort: app.hostPort,
+    caddyMode: app.caddyMode,
+  };
+
+  const nextApps = { ...(root.apps as Record<string, unknown>) };
+  delete nextApps[appId];
+  const candidate = { ...root, apps: nextApps };
+  if (Object.keys(nextApps).length > 0) parseConfig(candidate);
+
+  const secrets = await readFile(paths.secrets, "utf8");
+  const nextSecrets = secrets.split(/(?<=\n)/).filter((line) => !line.startsWith(`${app.secretEnvironmentVariable}=`)).join("");
+  await atomicWrite(paths.config, `${JSON.stringify(candidate, null, 2)}\n`, 0o600);
+  await atomicWrite(paths.secrets, nextSecrets, 0o600);
+  await rm(join(paths.statusDirectory, `${appId}.json`), { force: true });
+
+  let containerWarning: string | undefined;
+  const [executable, ...prefix] = app.composeCommand;
+  const stopped = await runner.run(executable, [
+    ...prefix,
+    "--project-name", app.composeProject,
+    "--file", resolve(app.checkout, app.composeFile),
+    "down",
+  ], { capture: true, timeoutMs: 120_000, env: { SHIBUMI_PORT: String(app.hostPort) } });
+  if (stopped.exitCode !== 0) containerWarning = stopped.stderr.trim() || `${executable} compose down failed`;
+
+  if (Object.keys(nextApps).length === 0) await services.disableAndStop();
+  else await services.enableAndRestart();
+  return { app: appRecord, remainingApps: Object.keys(nextApps).length, containerWarning };
 }
 
 export async function markCaddyManaged(home: string, appId: string): Promise<void> {

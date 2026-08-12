@@ -6,6 +6,8 @@ describe("CLI arguments", () => {
     expect(formatHelp()).toContain("渋み  shibumi-server");
     expect(formatHelp()).not.toContain("\x1b[");
     expect(formatHelp(true)).toContain("\x1b[38;5;208m渋み");
+    expect(formatHelp()).toContain("shibumi-server list");
+    expect(formatHelp()).toContain("shibumi-server remove <domain|app-id>");
   });
 
   test("parses help, version, and interactive setup", () => {
@@ -17,6 +19,12 @@ describe("CLI arguments", () => {
     expect(parseCliArgs([])).toEqual({ name: "setup" });
     expect(parseCliArgs(["setup"])).toEqual({ name: "setup" });
     expect(parseCliArgs(["update"])).toEqual({ name: "update" });
+    expect(parseCliArgs(["list"])).toEqual({ name: "list" });
+  });
+
+  test("parses app removal", () => {
+    expect(parseCliArgs(["remove", "example.com"])).toEqual({ name: "remove", app: "example.com", yes: false });
+    expect(parseCliArgs(["remove", "example-com", "--yes"])).toEqual({ name: "remove", app: "example-com", yes: true });
   });
 
   test("parses uninstall modes", () => {
@@ -124,6 +132,9 @@ describe("CLI arguments", () => {
     expect(() => parseCliArgs(["version", "extra"])).toThrow("does not accept");
     expect(() => parseCliArgs(["init", "extra"])).toThrow("does not accept");
     expect(() => parseCliArgs(["update", "extra"])).toThrow("does not accept");
+    expect(() => parseCliArgs(["list", "extra"])).toThrow("does not accept");
+    expect(() => parseCliArgs(["remove"])).toThrow("domain or app id");
+    expect(() => parseCliArgs(["remove", "example.com", "--purge"])).toThrow("unknown option");
     expect(() => parseCliArgs(["uninstall", "--yes"])).toThrow("requires --purge");
     expect(() => parseCliArgs(["uninstall", "--purge", "--purge"])).toThrow("only be used once");
     expect(() => parseCliArgs(["check"])).toThrow("--config");

@@ -12,7 +12,7 @@ import { DeploymentStatusStore } from "./status";
 import { updateToLatest, warnIfUpdateAvailable } from "./update";
 
 function requireLinux(): void {
-  if (process.platform !== "linux") throw new Error("init, update, and add require Linux with a systemd user session");
+  if (process.platform !== "linux") throw new Error("init, update, add, and remove require Linux with a systemd user session");
 }
 
 function supportsColor(): boolean {
@@ -94,6 +94,13 @@ try {
     if (command.purge) console.log("Removed local config and webhook secrets.");
     else console.log(`Preserved config and secrets in ${paths.configDirectory}.`);
     console.log("App checkouts, containers, Caddy, and GitHub settings were not changed.");
+  } else if (command.name === "list") {
+    const { runListApps } = await import("./setup");
+    await runListApps(homedir());
+  } else if (command.name === "remove") {
+    requireLinux();
+    const { runRemoveApp } = await import("./setup");
+    await runRemoveApp(homedir(), command.app, command.yes);
   } else if (command.name === "caddy-cutover") {
     requireLinux();
     const { runCaddyCutover } = await import("./setup");

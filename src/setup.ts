@@ -8,7 +8,7 @@ import { BunCommandRunner, type CommandRunner } from "./deploy";
 import { checkDomainDns, detectPublicAddresses } from "./domain";
 import { detectCaddySite, type CaddySiteOptions, type Compression, type HeaderProfile, type Indexing } from "./caddy";
 import { applyCaddyWithSudo, authorizeCaddySudo, type CaddyApplyRequest } from "./caddy-sudo";
-import { addApp, appIdForDomain, initializeInstallation, installationPaths, markCaddyManaged, type AddAppOptions } from "./install";
+import { addApp, appIdForDomain, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, type AddAppOptions } from "./install";
 import { normalizeGitHubRepository } from "./repository";
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -367,6 +367,77 @@ export async function runInteractiveSetup(options: {
     "Next: shibumi-server add example.com",
     "The service starts after its first app is added.",
   ].join("\n"));
+}
+
+export async function runListApps(home: string): Promise<void> {
+  intro("渋み  apps");
+  const apps = await registeredApps(home);
+  if (apps.length === 0) {
+    outro("No apps registered. Add one with: shibumi-server add <domain>");
+    return;
+  }
+  for (const app of apps) {
+    log.info([
+      `${app.domain}  (${app.appId})`,
+      `Repository  github:${app.repository}`,
+      `Upstream    127.0.0.1:${app.hostPort}`,
+      `Checkout    ${app.checkout}`,
+      `Caddy       ${app.caddyMode ?? "unmanaged"}`,
+    ].join("\n"));
+  }
+  outro(`${apps.length} app${apps.length === 1 ? "" : "s"} registered`);
+}
+
+export async function runRemoveApp(home: string, selector: string, yes = false): Promise<void> {
+  intro("渋み  remove an app");
+  const app = (await registeredApps(home)).find((item) => item.appId === selector || item.domain === selector);
+  if (!app) throw new Error(`unknown app: ${selector}.\n\nNext: run shibumi-server list and choose a domain or app ID.`);
+  log.info([
+    `Domain      ${app.domain}`,
+    `App ID      ${app.appId}`,
+    `Repository  github:${app.repository}`,
+    `Upstream    127.0.0.1:${app.hostPort}`,
+    "",
+    "Removes Shibumi config, webhook secret, deployment status, Caddy route, and app containers.",
+    "Preserves checkout, volumes, images, and GitHub webhook.",
+  ].join("\n"));
+  if (!yes) {
+    const accepted = await confirm({ message: `Remove ${app.domain} from this server?`, initialValue: false });
+    if (cancelled(accepted) || !accepted) {
+      cancel("Removal cancelled.");
+      return;
+    }
+  }
+
+  if (app.caddyMode) {
+    log.info("Caddy will validate and reload after removing Shibumi-managed configuration. sudo reads your password directly.");
+    try {
+      await applyCaddyWithSudo({ version: 1, action: "remove", appId: app.appId, domain: app.domain });
+    } catch (error) {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\n\nNext: fix Caddy validation, then rerun shibumi-server remove ${app.appId}.`);
+    }
+  }
+
+  let result;
+  try {
+    result = await removeApp(home, app.appId);
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\n\nNext: rerun shibumi-server remove ${app.appId}; Caddy removal is idempotent.`);
+  }
+  log.success(`${app.domain} removed from shibumi-server`);
+  log.info([
+    `Caddy       ${app.caddyMode ? "Shibumi route removed" : "unchanged (unmanaged)"}`,
+    `Checkout    preserved at ${app.checkout}`,
+    "Volumes     preserved",
+    "Images      preserved",
+    "GitHub      webhook preserved",
+  ].join("\n"));
+  if (result.containerWarning) {
+    log.warn(`App container could not be stopped: ${result.containerWarning}\nNext: stop its Compose project manually from ${app.checkout}.`);
+  }
+  outro(result.remainingApps === 0
+    ? "No apps remain. shibumi-server service stopped."
+    : `${result.remainingApps} app${result.remainingApps === 1 ? "" : "s"} remain. shibumi-server restarted.`);
 }
 
 export async function runCaddyCutover(home: string, appId: string): Promise<void> {

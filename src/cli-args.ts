@@ -3,7 +3,8 @@ import { normalizeGitHubRepository } from "./repository";
 export type CliCommand =
   | { name: "help" }
   | { name: "version" }
-  | { name: "setup" | "update" }
+  | { name: "setup" | "update" | "list" }
+  | { name: "remove"; app: string; yes: boolean }
   | { name: "check" | "serve"; config: string }
   | { name: "client-config"; appId: string; serverHostname?: string }
   | { name: "webhook-secret" | "caddy-cutover"; appId: string }
@@ -54,6 +55,10 @@ ${heading("SETUP")}
   ${command("shibumi-server uninstall")} [--purge [--yes]]
 
 ${heading("APPS")}
+  ${command("shibumi-server list")}                         List registered apps
+  ${command("shibumi-server remove <domain|app-id>")} [--yes]
+      Remove an app; preserve checkout, volumes, images, and GitHub webhook
+
   ${command("shibumi-server add <domain>")} [--dry-run]
       Add or preview an app interactively
 
@@ -124,9 +129,18 @@ export function parseCliArgs(argv: string[]): CliCommand {
     if (args.length > 0) fail("version does not accept arguments");
     return { name: "version" };
   }
-  if (name === "init" || name === "update") {
+  if (name === "init" || name === "update" || name === "list") {
     if (args.length > 0) fail(`${name} does not accept arguments`);
     return { name };
+  }
+  if (name === "remove") {
+    const app = args.shift();
+    if (!app || app.startsWith("--")) fail("remove requires a domain or app id");
+    const flags = new Set(args);
+    if (flags.size !== args.length) fail("remove flags may only be used once");
+    const unknown = args.find((arg) => arg !== "--yes");
+    if (unknown) fail(`unknown option: ${unknown}`);
+    return { name, app, yes: flags.has("--yes") };
   }
   if (name === "uninstall") {
     const flags = new Set(args);

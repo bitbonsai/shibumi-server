@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { addApp, appIdForDomain, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, SystemdUserServiceManager, uninstallInstallation, type CheckoutManager, type ServiceManager } from "../src/install";
+import { addApp, appIdForDomain, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, SystemdUserServiceManager, uninstallInstallation, type CheckoutManager, type ServiceManager } from "../src/install";
 import packageJson from "../package.json";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
 
@@ -246,6 +246,41 @@ describe("app registration", () => {
     await expect(addApp(appOptions(home, { domain: "not-a-domain" }), services, checkouts)).rejects.toThrow("public hostname");
     await expect(addApp(appOptions(home, { checkout: "relative/path" }), services, checkouts)).rejects.toThrow("absolute path");
     await expect(addApp(appOptions(home, { healthPath: "//other-host/path" }), services, checkouts)).rejects.toThrow("health path");
+  });
+
+  test("lists and removes apps while preserving deployment data", async () => {
+    const home = await temporaryHome();
+    const { services } = await initialized(home);
+    await addApp(appOptions(home, { caddyMode: "managed" }), services, checkouts);
+    await addApp(appOptions(home, {
+      domain: "second.example",
+      repository: "owner/second",
+      checkout: "/srv/shibumi/apps/second-example",
+      hostPort: 9_101,
+      caddyMode: "preserve",
+    }), services, checkouts);
+    const paths = installationPaths(home);
+    await mkdir(paths.statusDirectory, { recursive: true });
+    await writeFile(join(paths.statusDirectory, "example-com.json"), "{}\n");
+    const runner = new FakeRunner();
+
+    expect((await registeredApps(home)).map((app) => app.domain)).toEqual(["example.com", "second.example"]);
+    const first = await removeApp(home, "example.com", services, runner);
+    expect(first.remainingApps).toBe(1);
+    expect(first.app.checkout).toBe("/srv/shibumi/apps/example-com");
+    expect(runner.calls[0]).toEqual([
+      "podman", "compose", "--project-name", "example-com", "--file", "/srv/shibumi/apps/example-com/compose.yaml", "down",
+    ]);
+    expect(await Bun.file(join(paths.statusDirectory, "example-com.json")).exists()).toBe(false);
+    expect(await readFile(paths.secrets, "utf8")).not.toContain("SHIBUMI_SECRET_EXAMPLE_COM=");
+    expect(await readFile(paths.secrets, "utf8")).toContain("SHIBUMI_SECRET_SECOND_EXAMPLE=");
+    expect(services.restarts).toBe(3);
+
+    const last = await removeApp(home, "second-example", services, runner);
+    expect(last.remainingApps).toBe(0);
+    expect(await registeredApps(home)).toEqual([]);
+    expect(JSON.parse(await readFile(paths.config, "utf8")).apps).toEqual({});
+    expect(services.stops).toBe(1);
   });
 
   test("requires init and rejects ports already assigned to another app", async () => {

@@ -2,13 +2,20 @@ import { join } from "node:path";
 import type { CaddySiteOptions } from "./caddy";
 
 const HELPER = "/usr/local/sbin/shibumi-caddy-helper";
-const HELPER_VERSION = "1";
+const HELPER_VERSION = "2";
 
 export interface CaddyApplyRequest {
   version: 1;
   action: "apply";
   mode: "new" | "preserve" | "rewrite" | "cutover";
   site: CaddySiteOptions;
+}
+
+export interface CaddyRemoveRequest {
+  version: 1;
+  action: "remove";
+  appId: string;
+  domain: string;
 }
 
 async function command(args: string[], input?: string, inherit = false): Promise<{ exitCode: number; stdout: string; stderr: string }> {
@@ -35,7 +42,7 @@ export async function authorizeCaddySudo(): Promise<void> {
   if (authorization.exitCode !== 0) throw new Error("sudo authorization failed");
 }
 
-export async function applyCaddyWithSudo(request: CaddyApplyRequest): Promise<void> {
+export async function applyCaddyWithSudo(request: CaddyApplyRequest | CaddyRemoveRequest): Promise<void> {
   await authorizeCaddySudo();
 
   const version = await command(["sudo", "-n", HELPER, "--version"]);
