@@ -1,4 +1,5 @@
 import { cancel, confirm, intro, isCancel, log, note, outro, select, spinner, text } from "@clack/prompts";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { createServer } from "node:net";
@@ -35,6 +36,17 @@ export function formatReadySummary(options: {
 
 type WhichCommand = (command: string) => string | null;
 
+export function findCommand(
+  command: string,
+  home = homedir(),
+  which: WhichCommand = (name) => Bun.which(name),
+): string | null {
+  const resolved = which(command);
+  if (resolved) return resolved;
+  const local = join(home, ".local", "bin", command);
+  return existsSync(local) ? local : null;
+}
+
 async function composeAvailable(command: string[], runner: CommandRunner): Promise<boolean> {
   const [executable, ...prefix] = command;
   const result = await runner.run(executable, [...prefix, "version"], { capture: true, timeoutMs: 10_000 });
@@ -43,7 +55,7 @@ async function composeAvailable(command: string[], runner: CommandRunner): Promi
 
 export async function resolveComposeCommand(
   preferred?: string[],
-  which: WhichCommand = (command) => Bun.which(command),
+  which: WhichCommand = findCommand,
   runner: CommandRunner = new BunCommandRunner(),
 ): Promise<string[]> {
   if (preferred) {
@@ -60,7 +72,7 @@ export async function resolveComposeCommand(
 }
 
 export async function setupRequirementIssues(
-  which: WhichCommand = (command) => Bun.which(command),
+  which: WhichCommand = findCommand,
   runner: CommandRunner = new BunCommandRunner(),
 ): Promise<string[]> {
   const requirements = [

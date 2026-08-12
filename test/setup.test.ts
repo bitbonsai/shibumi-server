@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
-import { defaultCheckout, formatReadySummary, nextAvailablePort, resolveComposeCommand, setupRequirementIssues } from "../src/setup";
+import { defaultCheckout, findCommand, formatReadySummary, nextAvailablePort, resolveComposeCommand, setupRequirementIssues } from "../src/setup";
 
 class RequirementRunner implements CommandRunner {
   constructor(
@@ -47,6 +50,14 @@ describe("interactive setup", () => {
     expect(await setupRequirementIssues(available, new RequirementRunner(true, true, false, false))).toContain(
       "Podman Compose is not installed or usable (install podman-compose, then run podman-compose version)",
     );
+  });
+
+  test("finds user-local commands outside the process PATH", async () => {
+    const home = await mkdtemp(join(tmpdir(), "shibumi-commands-"));
+    const bin = join(home, ".local", "bin");
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "podman-compose"), "#!/bin/sh\n");
+    expect(findCommand("podman-compose", home, () => null)).toBe(join(bin, "podman-compose"));
   });
 
   test("selects an available Podman Compose frontend", async () => {
