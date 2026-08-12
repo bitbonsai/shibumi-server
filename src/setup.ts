@@ -26,6 +26,12 @@ export function mergeSetupAnswers(
   return { ...existing, ...Object.fromEntries(Object.entries(provided).filter(([, value]) => value !== undefined)) };
 }
 
+export function registrationOutcome(fromShipSetup = process.env.SHIBUMI_SHIP_SETUP === "1"): string {
+  return fromShipSetup
+    ? "Registration is current."
+    : "Next: https://shibumistack.dev/ship, then run bun run ship:setup from your local project root.";
+}
+
 export function formatReadySummary(options: {
   domain: string;
   appId: string;
@@ -709,7 +715,5 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
       ? "already configured"
       : caddy?.mode === "preserve" ? "existing upstream preserved" : "configured and reloaded",
   }));
-  outro(existingCaddyMode
-    ? "Registration is current."
-    : "Connect your project: https://shibumistack.dev/ship");
+  outro(registrationOutcome());
 }

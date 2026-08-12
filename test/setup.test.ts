@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
-import { defaultCheckout, findCommand, formatReadySummary, mergeSetupAnswers, nextAvailablePort, resolveComposeCommand, setupRequirementIssues } from "../src/setup";
+import { defaultCheckout, findCommand, formatReadySummary, mergeSetupAnswers, nextAvailablePort, registrationOutcome, resolveComposeCommand, setupRequirementIssues } from "../src/setup";
 
 class RequirementRunner implements CommandRunner {
   constructor(
@@ -82,6 +82,11 @@ describe("interactive setup", () => {
     expect(defaultCheckout("www.example.com", "/home/user")).toBe("/home/user/shibumi/www-example-com");
     expect(defaultCheckout("something-some.org", "/home/user")).toBe("/home/user/shibumi/something--some-org");
     expect(defaultCheckout("something.some-org", "/home/user")).toBe("/home/user/shibumi/something-some--org");
+  });
+
+  test("guides manual registration while keeping ship setup concise", () => {
+    expect(registrationOutcome(false)).toContain("run bun run ship:setup");
+    expect(registrationOutcome(true)).toBe("Registration is current.");
   });
 
   test("formats a concise ready summary without client placeholders or secret paths", () => {
