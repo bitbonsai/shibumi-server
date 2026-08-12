@@ -32,6 +32,8 @@ describe("configuration", () => {
     expect(parsed.apps.myapp.healthAttempts).toBe(20);
     expect(parsed.apps.myapp.retainedRollbackImages).toBe(2);
     expect(parseConfig(config({ testCommand: undefined })).apps.myapp.testCommand).toBeUndefined();
+    expect(parseConfig(config({ composeCommand: ["podman"] })).apps.myapp.composeCommand).toEqual(["podman", "compose"]);
+    expect(parseConfig(config({ composeCommand: ["podman-compose"] })).apps.myapp.composeCommand).toEqual(["podman-compose"]);
     expect(() => parseConfig(config({ testCommand: [] }))).toThrow("non-empty array");
   });
 

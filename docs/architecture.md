@@ -94,7 +94,7 @@ The retention setting accepts zero through ten rollback images. Image cleanup do
 
 ## Ports and Caddy
 
-Every app has an explicit Compose frontend and host port. Modern installations can use `["podman", "compose"]`; hosts with the standalone frontend can use `["podman-compose"]`. Compose binds the app only to loopback:
+Every app has an explicit Compose frontend and host port. Modern installations can use `["podman", "compose"]`; hosts with the standalone frontend can use `["podman-compose"]`. Legacy registrations containing `composeCommand: ["podman"]` normalize to the modern `podman compose` frontend before deploy or removal. Compose binds the app only to loopback:
 
 ```yaml
 services:

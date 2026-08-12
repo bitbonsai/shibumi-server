@@ -251,7 +251,7 @@ describe("app registration", () => {
   test("lists and removes apps while preserving deployment data", async () => {
     const home = await temporaryHome();
     const { services } = await initialized(home);
-    await addApp(appOptions(home, { caddyMode: "managed" }), services, checkouts);
+    await addApp(appOptions(home, { caddyMode: "managed", composeCommand: ["podman"] }), services, checkouts);
     await addApp(appOptions(home, {
       domain: "second.example",
       repository: "owner/second",

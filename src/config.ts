@@ -146,13 +146,16 @@ export function parseConfig(value: unknown): ServerConfig {
     const domain = appValue.domain === undefined ? undefined : string(appValue.domain, `apps.${appId}.domain`);
     if (domain !== undefined && !DOMAIN.test(domain)) throw new Error(`apps.${appId}.domain must be a lowercase public hostname`);
 
+    const configuredComposeCommand = command(appValue.composeCommand ?? ["podman", "compose"], `apps.${appId}.composeCommand`);
     const app: AppConfig = {
       domain,
       repository,
       ref: parseRef(appValue.ref, `apps.${appId}.ref`),
       checkout,
       composeFile: string(appValue.composeFile, `apps.${appId}.composeFile`),
-      composeCommand: command(appValue.composeCommand ?? ["podman", "compose"], `apps.${appId}.composeCommand`),
+      composeCommand: configuredComposeCommand.length === 1 && configuredComposeCommand[0] === "podman"
+        ? ["podman", "compose"]
+        : configuredComposeCommand,
       composeProject: identifier(appValue.composeProject, `apps.${appId}.composeProject`),
       service: identifier(appValue.service, `apps.${appId}.service`),
       hostPort,
