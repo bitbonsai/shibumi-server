@@ -120,7 +120,10 @@ export class GitCheckoutManager implements CheckoutManager {
 
     const composeFile = options.composeFile ?? "compose.yaml";
     if (!await exists(resolve(options.checkout, composeFile))) {
-      throw new Error(`repository is missing ${composeFile}.\n\nNext: add ${composeFile}, commit, and push it; or rerun add with --compose-file <relative-path>.`);
+      const tracked = await this.runner.run("git", ["-C", options.checkout, "ls-files"], { capture: true });
+      const candidates = tracked.stdout.split(/\r?\n/).filter((file) => /(^|\/)(?:compose\.ya?ml|docker-compose\.ya?ml)$/.test(file));
+      const found = candidates.length === 1 ? `\n\nFound ${candidates[0]}. Rerun add with --compose-file ${candidates[0]}.` : "";
+      throw new Error(`repository is missing ${composeFile}.${found}\n\nNext: from the local project root, run:\ncurl -fsSL https://shibumistack.dev/install/ship.sh | sh\n\nThe installer adds ship scripts and uses one detected Compose file without overwriting owned files.`);
     }
   }
 }

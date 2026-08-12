@@ -362,13 +362,14 @@ describe("Git checkout preparation", () => {
       { exitCode: 0, stdout: `${sha}\n`, stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
       { exitCode: 0, stdout: `${sha}\n`, stderr: "" },
+      { exitCode: 0, stdout: "website/compose.yaml\n", stderr: "" },
     ];
 
     await expect(new GitCheckoutManager(runner).prepare({
       repository: "owner/repository",
       checkout,
       composeFile: "compose.yaml",
-    })).rejects.toThrow("Next: add compose.yaml, commit, and push it; or rerun add with --compose-file");
+    })).rejects.toThrow("Found website/compose.yaml. Rerun add with --compose-file website/compose.yaml");
   });
 
   test("rejects a mismatched checkout origin", async () => {
