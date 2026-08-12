@@ -60,6 +60,7 @@ class SuccessfulRunner implements CommandRunner {
     this.calls += 1;
     if (args.includes("rev-parse")) return { exitCode: 0, stdout: `${commit}\n`, stderr: "" };
     if (args.includes("ps") && args.includes("--quiet")) return { exitCode: 0, stdout: "container-id\n", stderr: "" };
+    if (args[0] === "container" && args[1] === "list") return { exitCode: 0, stdout: "container-id\n", stderr: "" };
     if (args[0] === "container" && args[1] === "inspect") return { exitCode: 0, stdout: "sha256:image-id\n", stderr: "" };
     return { exitCode: 0, stdout: "", stderr: "" };
   }

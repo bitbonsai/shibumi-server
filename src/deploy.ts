@@ -9,6 +9,7 @@ export interface CommandOptions {
   env?: Record<string, string>;
   capture?: boolean;
   timeoutMs?: number;
+  onOutput?(line: string): void | Promise<void>;
 }
 
 export interface CommandResult {
@@ -45,6 +46,7 @@ export interface DeployDependencies {
   sleep(milliseconds: number): Promise<void>;
   logger: DeploymentLogger;
   onStage?(stage: string): void | Promise<void>;
+  onOutput?(stage: string, line: string): void | Promise<void>;
 }
 
 export interface DeployOptions {
@@ -72,13 +74,14 @@ function cleanEnvironment(extra: Record<string, string>): Record<string, string>
 export class BunCommandRunner implements CommandRunner {
   async run(command: string, args: string[], options: CommandOptions = {}): Promise<CommandResult> {
     const capture = options.capture ?? false;
+    const pipe = capture || options.onOutput !== undefined;
     let timedOut = false;
     const subprocess = Bun.spawn([command, ...args], {
       cwd: options.cwd,
       env: cleanEnvironment(options.env ?? {}),
       stdin: "ignore",
-      stdout: capture ? "pipe" : "inherit",
-      stderr: capture ? "pipe" : "inherit",
+      stdout: pipe ? "pipe" : "inherit",
+      stderr: pipe ? "pipe" : "inherit",
       detached: process.platform !== "win32",
     });
     const timer = options.timeoutMs === undefined
@@ -93,11 +96,32 @@ export class BunCommandRunner implements CommandRunner {
           }
         }, options.timeoutMs);
 
+    const consume = async (stream: ReadableStream<Uint8Array>, target: NodeJS.WriteStream): Promise<string> => {
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      let value = "";
+      let pending = "";
+      while (true) {
+        const { done, value: chunk } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(chunk, { stream: true });
+        if (capture) value += text;
+        else target.write(text);
+        pending += text;
+        const lines = pending.split(/\r?\n/);
+        pending = lines.pop() ?? "";
+        for (const line of lines) if (line.trim()) await options.onOutput?.(line);
+      }
+      pending += decoder.decode();
+      if (pending.trim()) await options.onOutput?.(pending);
+      return value;
+    };
+
     try {
       const [exitCode, stdout, stderr] = await Promise.all([
         subprocess.exited,
-        capture ? new Response(subprocess.stdout).text() : Promise.resolve(""),
-        capture ? new Response(subprocess.stderr).text() : Promise.resolve(""),
+        pipe ? consume(subprocess.stdout!, process.stdout) : Promise.resolve(""),
+        pipe ? consume(subprocess.stderr!, process.stderr) : Promise.resolve(""),
       ]);
       return { exitCode, stdout, stderr, timedOut };
     } finally {
@@ -138,7 +162,10 @@ async function runChecked(
 ): Promise<CommandResult> {
   await dependencies.onStage?.(stage);
   dependencies.logger.info("deployment stage started", { stage });
-  const result = await dependencies.runner.run(command, args, options);
+  const stream = (stage === "build" || stage === "test") && dependencies.onOutput
+    ? { ...options, onOutput: (line: string) => dependencies.onOutput?.(stage, line) }
+    : options;
+  const result = await dependencies.runner.run(command, args, stream);
   if (result.timedOut) {
     throw new DeploymentError(stage, `${stage} timed out after ${options.timeoutMs}ms`);
   }
@@ -210,9 +237,14 @@ async function retainReleaseImages(
     const container = await runChecked(
       dependencies,
       "retain",
-      composeExecutable,
-      [...compose, "ps", "--quiet", app.service],
-      { ...options, capture: true },
+      "podman",
+      [
+        "container", "list",
+        "--filter", `label=io.podman.compose.project=${app.composeProject}`,
+        "--filter", `label=io.podman.compose.service=${app.service}`,
+        "--format", "{{.ID}}",
+      ],
+      { capture: true },
     );
     const containerId = container.stdout.trim().split(/\s+/)[0];
     if (!containerId) throw new DeploymentError("retain", "cannot find the healthy application container");

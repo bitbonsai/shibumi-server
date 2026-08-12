@@ -32,6 +32,7 @@ class FakeRunner implements CommandRunner {
     const response = this.responses.shift();
     if (response) return response;
     if (args.includes("ps") && args.includes("--quiet")) return { exitCode: 0, stdout: "container-id\n", stderr: "" };
+    if (args[0] === "container" && args[1] === "list") return { exitCode: 0, stdout: "container-id\n", stderr: "" };
     if (args[0] === "container" && args[1] === "inspect") return { exitCode: 0, stdout: "sha256:image-id\n", stderr: "" };
     return { exitCode: 0, stdout: "", stderr: "" };
   }
@@ -74,7 +75,12 @@ describe("deployment pipeline", () => {
     ]);
     expect(calls[7]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "ps", "--quiet", "web"]);
     expect(calls[10]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "up", "-d", "--remove-orphans"]);
-    expect(calls[11]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "ps", "--quiet", "web"]);
+    expect(calls[11]).toEqual([
+      "podman", "container", "list",
+      "--filter", "label=io.podman.compose.project=myapp",
+      "--filter", "label=io.podman.compose.service=web",
+      "--format", "{{.ID}}",
+    ]);
     expect(calls[12]).toEqual(["podman", "container", "inspect", "--format", "{{.Image}}", "container-id"]);
     expect(calls[13]?.slice(0, 4)).toEqual(["podman", "image", "tag", "sha256:image-id"]);
     expect(calls[13]?.[4]).toMatch(/^localhost\/shibumi-server\/myapp:release-\d{13}-a{12}$/);

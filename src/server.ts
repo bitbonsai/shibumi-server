@@ -73,7 +73,7 @@ export class WebhookService {
     this.#historyStore = options.historyStore;
   }
 
-  async #writeStatus(appId: string, commit: string, state: DeploymentState, stage: string, message?: string): Promise<void> {
+  async #writeStatus(appId: string, commit: string, state: DeploymentState, stage: string, message?: string, output?: string): Promise<void> {
     if (!this.#statusStore) return;
     try {
       await this.#statusStore.write({
@@ -82,6 +82,7 @@ export class WebhookService {
         state,
         stage,
         message,
+        output,
         url: this.config.apps[appId]?.domain ? `https://${this.config.apps[appId].domain}` : undefined,
       });
     } catch (error) {
@@ -182,6 +183,11 @@ export class WebhookService {
       onStage: async (stage) => {
         await this.#deployDependencies.onStage?.(stage);
         await this.#writeStatus(appId, push.commit, "running", stage);
+      },
+      onOutput: async (stage, line) => {
+        await this.#deployDependencies.onOutput?.(stage, line);
+        const output = line.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 512);
+        if (output) await this.#writeStatus(appId, push.commit, "running", stage, undefined, output);
       },
     };
     const task = deploy(appId, app, push.commit, dependencies)

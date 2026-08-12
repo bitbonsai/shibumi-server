@@ -14,6 +14,7 @@ export interface DeploymentStatus {
   state: DeploymentState;
   stage: string;
   message?: string;
+  output?: string;
   url?: string;
   updatedAt: string;
 }
@@ -26,6 +27,7 @@ export class DeploymentStatusStore {
     if (!COMMIT.test(status.commit)) throw new Error("invalid status commit");
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(status.stage)) throw new Error("invalid status stage");
     if (status.message !== undefined && (status.message.length > 256 || /[\r\n\0]/.test(status.message))) throw new Error("invalid status message");
+    if (status.output !== undefined && (status.output.length > 512 || /[\r\n\0\x1b]/.test(status.output))) throw new Error("invalid status output");
     if (status.url !== undefined && (!status.url.startsWith("https://") || status.url.length > 512)) throw new Error("invalid status URL");
     const value: DeploymentStatus = {
       version: 1,
@@ -58,7 +60,8 @@ export class DeploymentStatusStore {
     const status = value as Partial<DeploymentStatus>;
     if (status.version !== 1 || status.appId !== appId || typeof status.commit !== "string" || !COMMIT.test(status.commit)
       || !["accepted", "running", "succeeded", "failed"].includes(status.state ?? "")
-      || typeof status.stage !== "string" || typeof status.updatedAt !== "string") {
+      || typeof status.stage !== "string" || typeof status.updatedAt !== "string"
+      || (status.output !== undefined && (typeof status.output !== "string" || status.output.length > 512 || /[\r\n\0\x1b]/.test(status.output)))) {
       throw new Error("deployment status is invalid");
     }
     if (commit !== undefined && status.commit !== commit) return undefined;
