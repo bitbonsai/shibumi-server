@@ -13,7 +13,7 @@ import { detectCaddySite, type CaddySiteOptions, type Compression, type HeaderPr
 import { applyCaddyWithSudo, authorizeCaddySudo, type CaddyApplyRequest } from "./caddy-sudo";
 import { addApp, appIdForDomain, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, type AddAppOptions } from "./install";
 import { normalizeGitHubRepository } from "./repository";
-import { brand } from "./terminal-ui";
+import { brand, link, next } from "./terminal-ui";
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -26,10 +26,13 @@ export function mergeSetupAnswers(
   return { ...existing, ...Object.fromEntries(Object.entries(provided).filter(([, value]) => value !== undefined)) };
 }
 
-export function registrationOutcome(fromShipSetup = process.env.SHIBUMI_SHIP_SETUP === "1"): string {
+export function registrationOutcome(
+  fromShipSetup = process.env.SHIBUMI_SHIP_SETUP === "1",
+  color?: boolean,
+): string {
   return fromShipSetup
     ? "Registration is current."
-    : "Next: https://shibumistack.dev/ship, then run bun run ship:setup from your local project root.";
+    : `${next(link("https://shibumistack.dev/ship", color), color)}\nRun bun run ship:setup from your local project root.`;
 }
 
 export function formatReadySummary(options: {
