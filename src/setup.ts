@@ -584,19 +584,21 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
   if (provided.domain) {
     try {
       const app = (await loadConfig(installationPaths(home).config)).apps[appIdForDomain(provided.domain)];
-      if (app) existing = {
-        domain: provided.domain,
-        repository: app.repository,
-        checkout: app.checkout,
-        hostPort: app.hostPort,
-        ref: app.ref,
-        composeFile: app.composeFile,
-        composeCommand: app.composeCommand,
-        service: app.service,
-        healthPath: new URL(app.healthUrl).pathname,
-        testCommand: app.testCommand,
-      };
-      existingCaddyMode = app.caddyMode;
+      if (app) {
+        existing = {
+          domain: provided.domain,
+          repository: app.repository,
+          checkout: app.checkout,
+          hostPort: app.hostPort,
+          ref: app.ref,
+          composeFile: app.composeFile,
+          composeCommand: app.composeCommand,
+          service: app.service,
+          healthPath: new URL(app.healthUrl).pathname,
+          testCommand: app.testCommand,
+        };
+        existingCaddyMode = app.caddyMode;
+      }
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("apps must contain at least one app")) throw error;
     }
@@ -707,5 +709,7 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
       ? "already configured"
       : caddy?.mode === "preserve" ? "existing upstream preserved" : "configured and reloaded",
   }));
-  outro("Connect your project: https://shibumistack.dev/ship");
+  outro(existingCaddyMode
+    ? "Registration is current."
+    : "Connect your project: https://shibumistack.dev/ship");
 }
