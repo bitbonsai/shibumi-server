@@ -125,9 +125,9 @@ try {
     ], "Next: shis add example.com");
   } else if (command.name === "uninstall") {
     requireLinux();
-    if (command.purge && !command.yes) {
-      const { confirmPurge } = await import("./setup");
-      if (!await confirmPurge()) process.exit(0);
+    if (!command.yes) {
+      const { confirmUninstall } = await import("./setup");
+      if (!await confirmUninstall(command.purge)) process.exit(0);
     }
     const ui = await humanUi();
     const uninstallBrand = ui ? (await import("./terminal-ui")).brand() : undefined;

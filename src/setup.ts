@@ -253,9 +253,11 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}, home = h
   };
 }
 
-export async function confirmPurge(): Promise<boolean> {
+export async function confirmUninstall(purge: boolean): Promise<boolean> {
   const accepted = await confirm({
-    message: "Permanently delete shibumi-server config and webhook secrets?",
+    message: purge
+      ? "Uninstall shibumi-server and permanently delete config and webhook secrets?"
+      : "Uninstall shibumi-server? Config and webhook secrets will be preserved.",
     initialValue: false,
   });
   if (cancelled(accepted) || !accepted) {

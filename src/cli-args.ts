@@ -54,7 +54,7 @@ ${heading("SETUP")}
   ${command("shis setup")}                             Guided installation
   ${command("shis init")}                              Install only (automation)
   ${command("shis update")}                            Install latest stable release
-  ${command("shis uninstall")} [--purge [--yes]]
+  ${command("shis uninstall")} [--purge] [--yes]
 
 ${heading("APPS")}
   ${command("shis list")}                              List registered apps
@@ -151,7 +151,6 @@ export function parseCliArgs(argv: string[]): CliCommand {
     if (flags.size !== args.length) fail("uninstall flags may only be used once");
     const unknown = args.find((arg) => arg !== "--purge" && arg !== "--yes");
     if (unknown) fail(`unknown option: ${unknown}`);
-    if (flags.has("--yes") && !flags.has("--purge")) fail("--yes requires --purge");
     return { name, purge: flags.has("--purge"), yes: flags.has("--yes") };
   }
 

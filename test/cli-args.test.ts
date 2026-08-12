@@ -29,6 +29,7 @@ describe("CLI arguments", () => {
 
   test("parses uninstall modes", () => {
     expect(parseCliArgs(["uninstall"])).toEqual({ name: "uninstall", purge: false, yes: false });
+    expect(parseCliArgs(["uninstall", "--yes"])).toEqual({ name: "uninstall", purge: false, yes: true });
     expect(parseCliArgs(["uninstall", "--purge"])).toEqual({ name: "uninstall", purge: true, yes: false });
     expect(parseCliArgs(["uninstall", "--purge", "--yes"])).toEqual({ name: "uninstall", purge: true, yes: true });
   });
@@ -141,7 +142,6 @@ describe("CLI arguments", () => {
     expect(() => parseCliArgs(["list", "extra"])).toThrow("does not accept");
     expect(() => parseCliArgs(["remove"])).toThrow("domain or app id");
     expect(() => parseCliArgs(["remove", "example.com", "--purge"])).toThrow("unknown option");
-    expect(() => parseCliArgs(["uninstall", "--yes"])).toThrow("requires --purge");
     expect(() => parseCliArgs(["uninstall", "--purge", "--purge"])).toThrow("only be used once");
     expect(() => parseCliArgs(["check"])).toThrow("--config");
     expect(() => parseCliArgs(["client-config"])).toThrow("app id");
