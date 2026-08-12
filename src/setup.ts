@@ -10,9 +10,9 @@ import { detectCaddySite, type CaddySiteOptions, type Compression, type HeaderPr
 import { applyCaddyWithSudo, authorizeCaddySudo, type CaddyApplyRequest } from "./caddy-sudo";
 import { addApp, appIdForDomain, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, type AddAppOptions } from "./install";
 import { normalizeGitHubRepository } from "./repository";
+import { BRAND, stage } from "./terminal-ui";
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-const BRAND = "渋み  shis (shibumi-server)";
 
 export type SetupAnswers = Omit<AddAppOptions, "home">;
 
@@ -23,11 +23,11 @@ export function formatReadySummary(options: {
   caddy: "already configured" | "configured and reloaded" | "existing upstream preserved";
 }): string {
   return [
-    `Domain    ${options.domain}`,
-    `Webhook   https://${options.domain}/hooks/github/${options.appId}`,
-    `Upstream  127.0.0.1:${options.hostPort}`,
-    `Caddy     ${options.caddy}`,
-    "Secret    stored on server",
+    stage("domain", options.domain),
+    stage("webhook", `https://${options.domain}/hooks/github/${options.appId}`, "info"),
+    stage("upstream", `127.0.0.1:${options.hostPort}`, "info"),
+    stage("caddy", options.caddy, "confirmed"),
+    stage("secret", "stored on server", "info"),
   ].join("\n");
 }
 
@@ -379,11 +379,11 @@ export async function runListApps(home: string): Promise<void> {
   }
   for (const app of apps) {
     log.info([
-      `${app.domain}  (${app.appId})`,
-      `Repository  github:${app.repository}`,
-      `Upstream    127.0.0.1:${app.hostPort}`,
-      `Checkout    ${app.checkout}`,
-      `Caddy       ${app.caddyMode ?? "unmanaged"}`,
+      stage("app", `${app.domain}  (${app.appId})`),
+      stage("repo", `github:${app.repository}`, "info"),
+      stage("upstream", `127.0.0.1:${app.hostPort}`, "info"),
+      stage("checkout", app.checkout, "info"),
+      stage("caddy", app.caddyMode ?? "unmanaged", "info"),
     ].join("\n"));
   }
   outro(`${apps.length} app${apps.length === 1 ? "" : "s"} registered`);
@@ -394,10 +394,10 @@ export async function runRemoveApp(home: string, selector: string, yes = false):
   const app = (await registeredApps(home)).find((item) => item.appId === selector || item.domain === selector);
   if (!app) throw new Error(`unknown app: ${selector}.\n\nNext: run shis list and choose a domain or app ID.`);
   log.info([
-    `Domain      ${app.domain}`,
-    `App ID      ${app.appId}`,
-    `Repository  github:${app.repository}`,
-    `Upstream    127.0.0.1:${app.hostPort}`,
+    stage("domain", app.domain),
+    stage("app", app.appId, "info"),
+    stage("repo", `github:${app.repository}`, "info"),
+    stage("upstream", `127.0.0.1:${app.hostPort}`, "info"),
     "",
     "Removes Shibumi config, webhook secret, deployment status, Caddy route, and app containers.",
     "Preserves checkout, volumes, images, and GitHub webhook.",
@@ -425,13 +425,13 @@ export async function runRemoveApp(home: string, selector: string, yes = false):
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\n\nNext: rerun shis remove ${app.appId}; Caddy removal is idempotent.`);
   }
-  log.success(`${app.domain} removed from shibumi-server`);
+  log.success(stage("removed", app.domain, "success"));
   log.info([
-    `Caddy       ${app.caddyMode ? "Shibumi route removed" : "unchanged (unmanaged)"}`,
-    `Checkout    preserved at ${app.checkout}`,
-    "Volumes     preserved",
-    "Images      preserved",
-    "GitHub      webhook preserved",
+    stage("caddy", app.caddyMode ? "Shibumi route removed" : "unchanged (unmanaged)", "confirmed"),
+    stage("checkout", `preserved at ${app.checkout}`, "info"),
+    stage("volumes", "preserved", "info"),
+    stage("images", "preserved", "info"),
+    stage("github", "webhook preserved", "info"),
   ].join("\n"));
   if (result.containerWarning) {
     log.warn(`App container could not be stopped: ${result.containerWarning}\nNext: stop its Compose project manually from ${app.checkout}.`);
@@ -594,7 +594,7 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
     return;
   }
 
-  log.success(`${answers.domain} is ready`);
+  log.success(stage("done", `${answers.domain} is ready`, "success"));
   log.info(formatReadySummary({
     domain: answers.domain,
     appId: app.appId,

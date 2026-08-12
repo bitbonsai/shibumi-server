@@ -53,11 +53,11 @@ describe("interactive setup", () => {
     });
 
     expect(summary).toBe([
-      "Domain    vibetoolbox.dev",
-      "Webhook   https://vibetoolbox.dev/hooks/github/vibetoolbox-dev",
-      "Upstream  127.0.0.1:9100",
-      "Caddy     configured and reloaded",
-      "Secret    stored on server",
+      " domain      vibetoolbox.dev",
+      " webhook     https://vibetoolbox.dev/hooks/github/vibetoolbox-dev",
+      " upstream    127.0.0.1:9100",
+      " caddy       configured and reloaded",
+      " secret      stored on server",
     ].join("\n"));
     expect(summary).not.toContain("<ssh-host>");
     expect(summary).not.toContain("secrets.env");
