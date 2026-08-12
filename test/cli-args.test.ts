@@ -102,6 +102,12 @@ describe("CLI arguments", () => {
       "--checkout", "/srv/apps/example",
       "--port", "9100",
     ])).toMatchObject({ repository: "owner/repo" });
+    expect(parseCliArgs([
+      "add", "staging.example.com",
+      "--repository", "https://github.com/owner/repo/tree/shibumi",
+      "--checkout", "/srv/apps/staging",
+      "--port", "9101",
+    ])).toMatchObject({ repository: "owner/repo", ref: "refs/heads/shibumi" });
     expect(() => parseCliArgs([
       "add", "example.com",
       "--repository", "https://example.com/owner/repo",

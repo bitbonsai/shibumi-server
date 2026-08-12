@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeGitHubRepository } from "../src/repository";
+import { normalizeGitHubRepository, parseGitHubRepositoryTarget } from "../src/repository";
 
 describe("GitHub repository input", () => {
   test("normalizes shorthand and HTTPS clone URLs", () => {
@@ -8,6 +8,13 @@ describe("GitHub repository input", () => {
     expect(normalizeGitHubRepository("https://github.com/owner/repo")).toBe("owner/repo");
     expect(normalizeGitHubRepository("https://github.com/owner/repo.git")).toBe("owner/repo");
     expect(normalizeGitHubRepository("https://github.com/owner/repo/")).toBe("owner/repo");
+  });
+
+  test("extracts branches from GitHub tree URLs", () => {
+    expect(parseGitHubRepositoryTarget("https://github.com/bitbonsai/mcpvault/tree/shibumi")).toEqual({
+      repository: "bitbonsai/mcpvault",
+      ref: "refs/heads/shibumi",
+    });
   });
 
   test("rejects non-GitHub URLs and extra URL data", () => {

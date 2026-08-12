@@ -1,4 +1,4 @@
-import { normalizeGitHubRepository } from "./repository";
+import { parseGitHubRepositoryTarget } from "./repository";
 
 export type CliCommand =
   | { name: "help" }
@@ -82,7 +82,7 @@ ${heading("OPERATIONS")}
   ${command("shis serve --config <path>")}
 
 ${heading("ADD OPTIONS")}
-  ${command("--repository <repository>")}       github:owner/repo or GitHub URL
+  ${command("--repository <repository>")}       github:owner/repo or GitHub URL, including /tree/<branch>
   ${command("--dry-run")}                     Preview without changing system
   ${command("--ref <refs/heads/main>")}        Git branch ref
   ${command("--compose-file <path>")}          Compose file inside checkout
@@ -217,8 +217,11 @@ export function parseCliArgs(argv: string[]): CliCommand {
       "--health-path",
     ]));
     const repositoryValue = values.get("--repository");
-    const repository = repositoryValue === undefined ? undefined : normalizeGitHubRepository(repositoryValue);
-    if (repositoryValue !== undefined && !repository) fail("--repository must use github:owner/repo or https://github.com/owner/repo");
+    const target = repositoryValue === undefined ? undefined : parseGitHubRepositoryTarget(repositoryValue);
+    const repository = target?.repository;
+    if (repositoryValue !== undefined && !target) fail("--repository must use github:owner/repo or a GitHub repository URL");
+    const explicitRef = values.get("--ref");
+    if (target?.ref && explicitRef && target.ref !== explicitRef) fail("GitHub tree URL branch conflicts with --ref");
     const portValue = values.get("--port");
     if (portValue !== undefined && !/^\d+$/.test(portValue)) fail("--port must be an integer");
     const composeFrontend = values.get("--compose-command");
@@ -234,7 +237,7 @@ export function parseCliArgs(argv: string[]): CliCommand {
       checkout: values.get("--checkout"),
       hostPort: portValue === undefined ? undefined : Number(portValue),
       testCommand,
-      ref: values.get("--ref"),
+      ref: explicitRef ?? target?.ref,
       composeFile: values.get("--compose-file"),
       composeCommand: composeFrontend === "podman-compose" ? ["podman-compose"] : undefined,
       service: values.get("--service"),

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { homedir } from "node:os";
+import { delimiter, dirname } from "node:path";
 import { resolve } from "node:path";
 import packageJson from "../package.json";
 import { createClientConfig, readWebhookSecret } from "./client-config";
@@ -22,7 +23,12 @@ function supportsColor(): boolean {
 
 async function installRelease(version: string): Promise<number> {
   return Bun.spawn([process.execPath, "x", `shibumi-server@${version}`, "init"], {
-    env: { ...process.env, SHIBUMI_SKIP_UPDATE_CHECK: "1", SHIBUMI_QUIET_INIT: "1" },
+    env: {
+      ...process.env,
+      PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH ?? ""}`,
+      SHIBUMI_SKIP_UPDATE_CHECK: "1",
+      SHIBUMI_QUIET_INIT: "1",
+    },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",

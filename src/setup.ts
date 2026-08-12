@@ -12,7 +12,7 @@ import { checkDomainDns, detectPublicAddresses } from "./domain";
 import { detectCaddySite, type CaddySiteOptions, type Compression, type HeaderProfile, type Indexing } from "./caddy";
 import { applyCaddyWithSudo, authorizeCaddySudo, type CaddyApplyRequest } from "./caddy-sudo";
 import { addApp, appIdForDomain, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, type AddAppOptions } from "./install";
-import { normalizeGitHubRepository } from "./repository";
+import { parseGitHubRepositoryTarget } from "./repository";
 import { brand, command, link, next } from "./terminal-ui";
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -200,10 +200,14 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}, home = h
   if (initial.domain !== undefined && !DOMAIN.test(initial.domain)) {
     throw new Error("domain must be a lowercase public hostname such as example.com");
   }
-  const initialRepository = initial.repository === undefined ? undefined : normalizeGitHubRepository(initial.repository);
-  if (initial.repository !== undefined && !initialRepository) {
-    throw new Error("repository must use github:owner/repo or https://github.com/owner/repo");
+  const initialTarget = initial.repository === undefined ? undefined : parseGitHubRepositoryTarget(initial.repository);
+  if (initial.repository !== undefined && !initialTarget) {
+    throw new Error("repository must use github:owner/repo or a GitHub repository URL");
   }
+  if (initialTarget?.ref && initial.ref && initialTarget.ref !== initial.ref) {
+    throw new Error("GitHub tree URL branch conflicts with ref");
+  }
+  const initialRepository = initialTarget?.repository;
   if (initial.checkout !== undefined && !isAbsolute(initial.checkout)) {
     throw new Error("checkout must be an absolute path");
   }
@@ -223,10 +227,12 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}, home = h
     const answer = await text({
       message: "Where's the repository?",
       placeholder: "github:owner/repo or https://github.com/owner/repo",
-      validate: (value) => normalizeGitHubRepository(value) ? undefined : "Use github:owner/repo or a GitHub URL",
+      validate: (value) => parseGitHubRepositoryTarget(value) ? undefined : "Use github:owner/repo or a GitHub URL",
     });
     if (cancelled(answer)) return stopSetup();
-    repository = normalizeGitHubRepository(answer) as string;
+    const target = parseGitHubRepositoryTarget(answer)!;
+    repository = target.repository;
+    if (!initial.ref && target.ref) initial.ref = target.ref;
   }
 
   const suggestedCheckout = defaultCheckout(domain, home);
@@ -257,6 +263,7 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}, home = h
     ...initial,
     domain,
     repository,
+    ref: initial.ref ?? initialTarget?.ref,
     checkout,
     hostPort: Number(port),
   };
