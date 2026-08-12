@@ -19,6 +19,13 @@ const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?
 
 export type SetupAnswers = Omit<AddAppOptions, "home">;
 
+export function mergeSetupAnswers(
+  existing: Partial<SetupAnswers>,
+  provided: Partial<SetupAnswers>,
+): Partial<SetupAnswers> {
+  return { ...existing, ...Object.fromEntries(Object.entries(provided).filter(([, value]) => value !== undefined)) };
+}
+
 export function formatReadySummary(options: {
   domain: string;
   appId: string;
@@ -592,7 +599,7 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
       if (!(error instanceof Error) || !error.message.includes("apps must contain at least one app")) throw error;
     }
   }
-  const initial = { ...existing, ...provided };
+  const initial = mergeSetupAnswers(existing, provided);
   initial.composeCommand = await resolveComposeCommand(initial.composeCommand);
   if (initial.domain) {
     const progress = spinner();

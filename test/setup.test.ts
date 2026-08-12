@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
-import { defaultCheckout, findCommand, formatReadySummary, nextAvailablePort, resolveComposeCommand, setupRequirementIssues } from "../src/setup";
+import { defaultCheckout, findCommand, formatReadySummary, mergeSetupAnswers, nextAvailablePort, resolveComposeCommand, setupRequirementIssues } from "../src/setup";
 
 class RequirementRunner implements CommandRunner {
   constructor(
@@ -69,6 +69,13 @@ describe("interactive setup", () => {
     )).toEqual(["/usr/bin/podman-compose"]);
     await expect(resolveComposeCommand(undefined, () => null, new RequirementRunner(true, true, false, false)))
       .rejects.toThrow("install podman-compose");
+  });
+
+  test("keeps registered values when CLI options are undefined", () => {
+    expect(mergeSetupAnswers(
+      { checkout: "/home/user/shibumi/example-com", hostPort: 9_100 },
+      { checkout: undefined, hostPort: undefined, repository: "owner/example" },
+    )).toEqual({ checkout: "/home/user/shibumi/example-com", hostPort: 9_100, repository: "owner/example" });
   });
 
   test("derives a collision-free default checkout from the domain", () => {
