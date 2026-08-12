@@ -47,11 +47,15 @@ export async function resolveComposeCommand(
   runner: CommandRunner = new BunCommandRunner(),
 ): Promise<string[]> {
   if (preferred) {
-    if (await composeAvailable(preferred, runner)) return preferred;
-    throw new Error(`${preferred.join(" ")} is not available.\n\nNext: install that Compose frontend and verify ${preferred.join(" ")} version.`);
+    if (!await composeAvailable(preferred, runner)) {
+      throw new Error(`${preferred.join(" ")} is not available.\n\nNext: install that Compose frontend and verify ${preferred.join(" ")} version.`);
+    }
+    if (preferred.length === 1 && preferred[0] === "podman-compose") return [which("podman-compose") ?? preferred[0]];
+    return preferred;
   }
   if (await composeAvailable(["podman", "compose"], runner)) return ["podman", "compose"];
-  if (which("podman-compose") && await composeAvailable(["podman-compose"], runner)) return ["podman-compose"];
+  const standalone = which("podman-compose");
+  if (standalone && await composeAvailable([standalone], runner)) return [standalone];
   throw new Error("Podman Compose is not available.\n\nNext: install podman-compose with your Linux package manager, then run podman-compose version.");
 }
 

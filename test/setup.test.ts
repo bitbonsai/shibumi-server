@@ -17,7 +17,7 @@ class RequirementRunner implements CommandRunner {
     if (command === "podman" && args[0] === "compose") {
       return { exitCode: this.podmanCompose ? 0 : 125, stdout: "", stderr: this.podmanCompose ? "" : "unrecognized command" };
     }
-    if (command === "podman-compose") {
+    if (command.endsWith("/podman-compose") || command === "podman-compose") {
       return { exitCode: this.standaloneCompose ? 0 : 1, stdout: "", stderr: "" };
     }
     if (command === "systemctl") {
@@ -55,7 +55,7 @@ describe("interactive setup", () => {
       undefined,
       (command) => command === "podman-compose" ? "/usr/bin/podman-compose" : null,
       new RequirementRunner(true, true, false, true),
-    )).toEqual(["podman-compose"]);
+    )).toEqual(["/usr/bin/podman-compose"]);
     await expect(resolveComposeCommand(undefined, () => null, new RequirementRunner(true, true, false, false)))
       .rejects.toThrow("install podman-compose");
   });
