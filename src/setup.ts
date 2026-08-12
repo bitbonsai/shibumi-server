@@ -21,13 +21,13 @@ export function formatReadySummary(options: {
   appId: string;
   hostPort: number;
   caddy: "already configured" | "configured and reloaded" | "existing upstream preserved";
-}): string {
+}, color?: boolean): string {
   return [
-    stage("domain", options.domain),
-    stage("webhook", `https://${options.domain}/hooks/github/${options.appId}`, "info"),
-    stage("upstream", `127.0.0.1:${options.hostPort}`, "info"),
-    stage("caddy", options.caddy, "confirmed"),
-    stage("secret", "stored on server", "info"),
+    stage("domain", options.domain, "neutral", color),
+    stage("webhook", `https://${options.domain}/hooks/github/${options.appId}`, "info", color),
+    stage("upstream", `127.0.0.1:${options.hostPort}`, "info", color),
+    stage("caddy", options.caddy, "confirmed", color),
+    stage("secret", "stored on server", "info", color),
   ].join("\n");
 }
 

@@ -50,7 +50,7 @@ describe("interactive setup", () => {
       appId: "vibetoolbox-dev",
       hostPort: 9_100,
       caddy: "configured and reloaded",
-    });
+    }, false);
 
     expect(summary).toBe([
       " domain      vibetoolbox.dev",
