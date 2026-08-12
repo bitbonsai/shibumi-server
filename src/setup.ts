@@ -35,6 +35,26 @@ export function formatReadySummary(options: {
 
 type WhichCommand = (command: string) => string | null;
 
+async function composeAvailable(command: string[], runner: CommandRunner): Promise<boolean> {
+  const [executable, ...prefix] = command;
+  const result = await runner.run(executable, [...prefix, "version"], { capture: true, timeoutMs: 10_000 });
+  return !result.timedOut && result.exitCode === 0;
+}
+
+export async function resolveComposeCommand(
+  preferred?: string[],
+  which: WhichCommand = (command) => Bun.which(command),
+  runner: CommandRunner = new BunCommandRunner(),
+): Promise<string[]> {
+  if (preferred) {
+    if (await composeAvailable(preferred, runner)) return preferred;
+    throw new Error(`${preferred.join(" ")} is not available.\n\nNext: install that Compose frontend and verify ${preferred.join(" ")} version.`);
+  }
+  if (await composeAvailable(["podman", "compose"], runner)) return ["podman", "compose"];
+  if (which("podman-compose") && await composeAvailable(["podman-compose"], runner)) return ["podman-compose"];
+  throw new Error("Podman Compose is not available.\n\nNext: install podman-compose with your Linux package manager, then run podman-compose version.");
+}
+
 export async function setupRequirementIssues(
   which: WhichCommand = (command) => Bun.which(command),
   runner: CommandRunner = new BunCommandRunner(),
@@ -57,6 +77,12 @@ export async function setupRequirementIssues(
     });
     if (result.timedOut || result.exitCode !== 0 || result.stdout.trim() !== "true") {
       issues.push("Podman is not configured for the current user (rootless mode)");
+    } else {
+      try {
+        await resolveComposeCommand(undefined, which, runner);
+      } catch {
+        issues.push("Podman Compose is not installed or usable (install podman-compose, then run podman-compose version)");
+      }
     }
   }
 
@@ -551,6 +577,7 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
     }
   }
   const initial = { ...existing, ...provided };
+  initial.composeCommand = await resolveComposeCommand(initial.composeCommand);
   if (initial.domain) {
     const progress = spinner();
     progress.start(`Checking DNS for ${initial.domain}`);

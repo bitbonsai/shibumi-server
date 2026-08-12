@@ -129,8 +129,16 @@ try {
       const { confirmPurge } = await import("./setup");
       if (!await confirmPurge()) process.exit(0);
     }
+    const ui = await humanUi();
+    const uninstallBrand = ui ? (await import("./terminal-ui")).brand() : undefined;
     const paths = await uninstallInstallation(homedir(), command.purge);
-    await present([
+    if (ui) {
+      ui.intro(uninstallBrand!);
+      ui.log.success("Removed service, launchers, and installed releases");
+      if (command.purge) ui.log.warn("Removed local config and webhook secrets");
+      else ui.log.info(`Preserved config and secrets in ${paths.configDirectory}`);
+      ui.outro("App checkouts, containers, Caddy, and GitHub settings are unchanged");
+    } else await present([
       { tone: "success", message: "Removed service, launchers, and installed releases" },
       { tone: command.purge ? "warn" : "info", message: command.purge ? "Removed local config and webhook secrets" : `Preserved config and secrets in ${paths.configDirectory}` },
     ], "App checkouts, containers, Caddy, and GitHub settings are unchanged");
@@ -179,6 +187,8 @@ try {
     requireLinux();
     const { name: _, ...options } = command;
     if (options.repository && options.checkout && options.hostPort !== undefined) {
+      const { resolveComposeCommand } = await import("./setup");
+      options.composeCommand = await resolveComposeCommand(options.composeCommand);
       const result = await addApp({
         home: homedir(),
         ...options,

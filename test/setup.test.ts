@@ -1,21 +1,29 @@
 import { describe, expect, test } from "bun:test";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
-import { defaultCheckout, formatReadySummary, nextAvailablePort, setupRequirementIssues } from "../src/setup";
+import { defaultCheckout, formatReadySummary, nextAvailablePort, resolveComposeCommand, setupRequirementIssues } from "../src/setup";
 
 class RequirementRunner implements CommandRunner {
   constructor(
     private readonly rootless = true,
     private readonly userSystemd = true,
+    private readonly podmanCompose = true,
+    private readonly standaloneCompose = false,
   ) {}
 
-  async run(command: string, _args: string[], _options?: CommandOptions): Promise<CommandResult> {
-    if (command === "podman") {
+  async run(command: string, args: string[], _options?: CommandOptions): Promise<CommandResult> {
+    if (command === "podman" && args[0] === "info") {
       return { exitCode: this.rootless ? 0 : 1, stdout: this.rootless ? "true\n" : "false\n", stderr: "" };
+    }
+    if (command === "podman" && args[0] === "compose") {
+      return { exitCode: this.podmanCompose ? 0 : 125, stdout: "", stderr: this.podmanCompose ? "" : "unrecognized command" };
+    }
+    if (command === "podman-compose") {
+      return { exitCode: this.standaloneCompose ? 0 : 1, stdout: "", stderr: "" };
     }
     if (command === "systemctl") {
       return { exitCode: this.userSystemd ? 0 : 1, stdout: "", stderr: "" };
     }
-    throw new Error(`unexpected command: ${command}`);
+    throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
   }
 }
 
@@ -36,6 +44,20 @@ describe("interactive setup", () => {
       "Podman is not configured for the current user (rootless mode)",
       "a systemd user session is not available",
     ]);
+    expect(await setupRequirementIssues(available, new RequirementRunner(true, true, false, false))).toContain(
+      "Podman Compose is not installed or usable (install podman-compose, then run podman-compose version)",
+    );
+  });
+
+  test("selects an available Podman Compose frontend", async () => {
+    expect(await resolveComposeCommand(undefined, () => null, new RequirementRunner())).toEqual(["podman", "compose"]);
+    expect(await resolveComposeCommand(
+      undefined,
+      (command) => command === "podman-compose" ? "/usr/bin/podman-compose" : null,
+      new RequirementRunner(true, true, false, true),
+    )).toEqual(["podman-compose"]);
+    await expect(resolveComposeCommand(undefined, () => null, new RequirementRunner(true, true, false, false)))
+      .rejects.toThrow("install podman-compose");
   });
 
   test("derives a collision-free default checkout from the domain", () => {
