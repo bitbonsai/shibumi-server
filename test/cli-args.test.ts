@@ -47,6 +47,12 @@ describe("CLI arguments", () => {
       commit: "a".repeat(40),
       json: true,
     });
+    expect(parseCliArgs(["history", "example-com", "--json"])).toEqual({
+      name: "history", appId: "example-com", json: true,
+    });
+    expect(parseCliArgs(["rollback", "example-com", "abcdef0", "--yes"])).toEqual({
+      name: "rollback", appId: "example-com", commit: "abcdef0", yes: true,
+    });
   });
 
   test("parses check and serve config paths", () => {

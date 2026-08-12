@@ -4,13 +4,15 @@ import { homedir } from "node:os";
 import { createServer } from "node:net";
 import { isAbsolute, join, resolve } from "node:path";
 import { loadConfig } from "./config";
-import { BunCommandRunner, type CommandRunner } from "./deploy";
+import { BunCommandRunner, deploy, DeploymentError, defaultDeployDependencies, type CommandRunner } from "./deploy";
+import { DeploymentHistoryStore } from "./history";
+import { DeploymentStatusStore } from "./status";
 import { checkDomainDns, detectPublicAddresses } from "./domain";
 import { detectCaddySite, type CaddySiteOptions, type Compression, type HeaderProfile, type Indexing } from "./caddy";
 import { applyCaddyWithSudo, authorizeCaddySudo, type CaddyApplyRequest } from "./caddy-sudo";
 import { addApp, appIdForDomain, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, type AddAppOptions } from "./install";
 import { normalizeGitHubRepository } from "./repository";
-import { BRAND, stage } from "./terminal-ui";
+import { brand } from "./terminal-ui";
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -21,13 +23,13 @@ export function formatReadySummary(options: {
   appId: string;
   hostPort: number;
   caddy: "already configured" | "configured and reloaded" | "existing upstream preserved";
-}, color?: boolean): string {
+}): string {
   return [
-    stage("domain", options.domain, "neutral", color),
-    stage("webhook", `https://${options.domain}/hooks/github/${options.appId}`, "info", color),
-    stage("upstream", `127.0.0.1:${options.hostPort}`, "info", color),
-    stage("caddy", options.caddy, "confirmed", color),
-    stage("secret", "stored on server", "info", color),
+    `Domain    ${options.domain}`,
+    `Webhook   https://${options.domain}/hooks/github/${options.appId}`,
+    `Upstream  127.0.0.1:${options.hostPort}`,
+    `Caddy     ${options.caddy}`,
+    "Secret    stored on server",
   ].join("\n");
 }
 
@@ -335,7 +337,7 @@ export async function runInteractiveSetup(options: {
   packageRoot: string;
   bunExecutable: string;
 }): Promise<void> {
-  intro(BRAND);
+  intro(brand());
   const issues = await setupRequirementIssues();
   if (issues.length > 0) {
     cancel(`Setup needs attention:\n${issues.map((issue) => `  • ${issue}`).join("\n")}\n\nInstall or configure these requirements, then run setup again.`);
@@ -371,7 +373,7 @@ export async function runInteractiveSetup(options: {
 }
 
 export async function runListApps(home: string): Promise<void> {
-  intro(BRAND);
+  intro(brand());
   const apps = await registeredApps(home);
   if (apps.length === 0) {
     outro("No apps registered. Add one with: shis add <domain>");
@@ -379,25 +381,25 @@ export async function runListApps(home: string): Promise<void> {
   }
   for (const app of apps) {
     log.info([
-      stage("app", `${app.domain}  (${app.appId})`),
-      stage("repo", `github:${app.repository}`, "info"),
-      stage("upstream", `127.0.0.1:${app.hostPort}`, "info"),
-      stage("checkout", app.checkout, "info"),
-      stage("caddy", app.caddyMode ?? "unmanaged", "info"),
+      `${app.domain}  (${app.appId})`,
+      `Repository  github:${app.repository}`,
+      `Upstream    127.0.0.1:${app.hostPort}`,
+      `Checkout    ${app.checkout}`,
+      `Caddy       ${app.caddyMode ?? "unmanaged"}`,
     ].join("\n"));
   }
   outro(`${apps.length} app${apps.length === 1 ? "" : "s"} registered`);
 }
 
 export async function runRemoveApp(home: string, selector: string, yes = false): Promise<void> {
-  intro(BRAND);
+  intro(brand());
   const app = (await registeredApps(home)).find((item) => item.appId === selector || item.domain === selector);
   if (!app) throw new Error(`unknown app: ${selector}.\n\nNext: run shis list and choose a domain or app ID.`);
   log.info([
-    stage("domain", app.domain),
-    stage("app", app.appId, "info"),
-    stage("repo", `github:${app.repository}`, "info"),
-    stage("upstream", `127.0.0.1:${app.hostPort}`, "info"),
+    `Domain      ${app.domain}`,
+    `App ID      ${app.appId}`,
+    `Repository  github:${app.repository}`,
+    `Upstream    127.0.0.1:${app.hostPort}`,
     "",
     "Removes Shibumi config, webhook secret, deployment status, Caddy route, and app containers.",
     "Preserves checkout, volumes, images, and GitHub webhook.",
@@ -425,13 +427,13 @@ export async function runRemoveApp(home: string, selector: string, yes = false):
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\n\nNext: rerun shis remove ${app.appId}; Caddy removal is idempotent.`);
   }
-  log.success(stage("removed", app.domain, "success"));
+  log.success(`${app.domain} removed from shibumi-server`);
   log.info([
-    stage("caddy", app.caddyMode ? "Shibumi route removed" : "unchanged (unmanaged)", "confirmed"),
-    stage("checkout", `preserved at ${app.checkout}`, "info"),
-    stage("volumes", "preserved", "info"),
-    stage("images", "preserved", "info"),
-    stage("github", "webhook preserved", "info"),
+    `Caddy       ${app.caddyMode ? "Shibumi route removed" : "unchanged (unmanaged)"}`,
+    `Checkout    preserved at ${app.checkout}`,
+    "Volumes     preserved",
+    "Images      preserved",
+    "GitHub      webhook preserved",
   ].join("\n"));
   if (result.containerWarning) {
     log.warn(`App container could not be stopped: ${result.containerWarning}\nNext: stop its Compose project manually from ${app.checkout}.`);
@@ -441,8 +443,58 @@ export async function runRemoveApp(home: string, selector: string, yes = false):
     : `${result.remainingApps} app${result.remainingApps === 1 ? "" : "s"} remain. shibumi-server restarted.`);
 }
 
+export async function runRollback(home: string, appId: string, commit: string, yes = false): Promise<void> {
+  const paths = installationPaths(home);
+  const config = await loadConfig(paths.config);
+  const app = config.apps[appId];
+  if (!app) throw new Error(`unknown app: ${appId}.\n\nNext: run shis list and choose an app ID.`);
+  intro(brand());
+  if (!yes) {
+    const accepted = await confirm({ message: `Rebuild and deploy ${app.domain ?? appId} at ${commit.slice(0, 12)}?` });
+    if (isCancel(accepted) || !accepted) {
+      cancel("Rollback cancelled.");
+      return;
+    }
+  }
+  const runner = new BunCommandRunner();
+  const stopped = await runner.run("systemctl", ["--user", "stop", "shibumi-server.service"], { capture: true, timeoutMs: 120_000 });
+  if (stopped.exitCode !== 0) throw new Error(`${stopped.stderr.trim() || "cannot stop shibumi-server"}\n\nNext: inspect systemctl --user status shibumi-server, then retry rollback.`);
+  const startedAt = Date.now();
+  const history = new DeploymentHistoryStore(paths.historyDirectory);
+  const status = new DeploymentStatusStore(paths.statusDirectory);
+  try {
+    const fetched = await runner.run("git", ["-C", app.checkout, "fetch", "--prune", "origin", app.ref], { capture: true, timeoutMs: 120_000 });
+    if (fetched.exitCode !== 0) throw new Error(`${fetched.stderr.trim() || "cannot fetch configured branch"}\n\nNext: verify Git access and retry rollback.`);
+    const resolved = await runner.run("git", ["-C", app.checkout, "rev-parse", "--verify", `${commit}^{commit}`], { capture: true });
+    const fullCommit = resolved.stdout.trim().toLowerCase();
+    if (resolved.exitCode !== 0 || !/^[a-f0-9]{40}$/.test(fullCommit)) {
+      throw new Error(`commit ${commit} is unknown or ambiguous.\n\nNext: use a unique SHA from the configured branch.`);
+    }
+    await history.append({ appId, commit: fullCommit, kind: "rollback", state: "accepted" });
+    await status.write({ appId, commit: fullCommit, state: "accepted", stage: "accepted", url: app.domain ? `https://${app.domain}` : undefined });
+    const dependencies = defaultDeployDependencies();
+    dependencies.onStage = async (stage) => {
+      await status.write({ appId, commit: fullCommit, state: "running", stage, url: app.domain ? `https://${app.domain}` : undefined });
+    };
+    try {
+      await deploy(appId, app, fullCommit, dependencies, { allowAncestor: true });
+      await status.write({ appId, commit: fullCommit, state: "succeeded", stage: "shipped", url: app.domain ? `https://${app.domain}` : undefined });
+      await history.append({ appId, commit: fullCommit, kind: "rollback", state: "succeeded", durationMs: Date.now() - startedAt });
+      outro(`${app.domain ?? appId} rolled back to ${fullCommit.slice(0, 12)}`);
+    } catch (error) {
+      const stage = error instanceof DeploymentError ? error.stage : "unknown";
+      await status.write({ appId, commit: fullCommit, state: "failed", stage, message: `${stage} failed`, url: app.domain ? `https://${app.domain}` : undefined });
+      await history.append({ appId, commit: fullCommit, kind: "rollback", state: "failed", stage, durationMs: Date.now() - startedAt });
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\n\nNext: inspect shis history ${appId} and systemctl --user status shibumi-server.`);
+    }
+  } finally {
+    const started = await runner.run("systemctl", ["--user", "start", "shibumi-server.service"], { capture: true, timeoutMs: 30_000 });
+    if (started.exitCode !== 0) log.error(`shibumi-server could not restart: ${started.stderr.trim()}\nNext: run systemctl --user start shibumi-server.`);
+  }
+}
+
 export async function runCaddyCutover(home: string, appId: string): Promise<void> {
-  intro(BRAND);
+  intro(brand());
   const paths = installationPaths(home);
   const config = await loadConfig(paths.config);
   const app = config.apps[appId];
@@ -474,7 +526,7 @@ export async function runCaddyCutover(home: string, appId: string): Promise<void
 }
 
 export async function runInteractiveAdd(options: { home: string } & Partial<SetupAnswers>): Promise<void> {
-  intro(BRAND);
+  intro(brand());
   const { home, ...provided } = options;
   let existing: Partial<SetupAnswers> = {};
   let existingCaddyMode: AddAppOptions["caddyMode"];
@@ -594,7 +646,7 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
     return;
   }
 
-  log.success(stage("done", `${answers.domain} is ready`, "success"));
+  log.success(`${answers.domain} is ready`);
   log.info(formatReadySummary({
     domain: answers.domain,
     appId: app.appId,

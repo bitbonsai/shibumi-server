@@ -9,6 +9,8 @@ export type CliCommand =
   | { name: "client-config"; appId: string; serverHostname?: string }
   | { name: "webhook-secret" | "caddy-cutover"; appId: string }
   | { name: "status"; appId: string; commit?: string; json: boolean }
+  | { name: "history"; appId: string; json: boolean }
+  | { name: "rollback"; appId: string; commit: string; yes: boolean }
   | { name: "init" }
   | { name: "uninstall"; purge: boolean; yes: boolean }
   | {
@@ -71,6 +73,8 @@ ${heading("APPS")}
 
 ${heading("OPERATIONS")}
   ${command("shis status <app-id>")} [--commit <sha>] [--json]
+  ${command("shis history <app-id>")} [--json]
+  ${command("shis rollback <app-id> <sha>")} [--yes]
   ${command("shis caddy-cutover <app-id>")}
   ${command("shis client-config <app-id>")} [--server-hostname <host>]
   ${command("shis webhook-secret <app-id>")}
@@ -166,6 +170,21 @@ export function parseCliArgs(argv: string[]): CliCommand {
   if (name === "webhook-secret" || name === "caddy-cutover") {
     if (args.length !== 1 || args[0].startsWith("--")) fail(`${name} requires an app id`);
     return { name, appId: args[0] };
+  }
+
+  if (name === "history") {
+    const appId = args.shift();
+    if (!appId || appId.startsWith("--")) fail("history requires an app id");
+    if (args.some((arg) => arg !== "--json") || args.filter((arg) => arg === "--json").length > 1) fail("history accepts only one --json flag");
+    return { name, appId, json: args.includes("--json") };
+  }
+
+  if (name === "rollback") {
+    const [appId, commit, ...flags] = args;
+    if (!appId || !commit) fail("rollback requires an app id and commit SHA");
+    if (!/^[a-f0-9]{7,40}$/.test(commit)) fail("rollback commit must be a lowercase SHA with 7 to 40 characters");
+    if (flags.some((arg) => arg !== "--yes") || flags.filter((arg) => arg === "--yes").length > 1) fail("rollback accepts only one --yes flag");
+    return { name, appId, commit, yes: flags.includes("--yes") };
   }
 
   if (name === "status") {

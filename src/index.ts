@@ -6,6 +6,7 @@ export * from "./deploy";
 export * from "./domain";
 export * from "./deliveries";
 export * from "./github";
+export * from "./history";
 export * from "./install";
 export * from "./locks";
 export * from "./server";

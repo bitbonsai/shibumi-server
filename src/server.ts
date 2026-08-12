@@ -4,6 +4,7 @@ import { defaultDeployDependencies, deploy, DeploymentError, type DeployDependen
 import { isGitHubSignature, normalizeGitHubDeliveryId, parseGitHubPush, verifyGitHubSignature } from "./github";
 import { AppLocks } from "./locks";
 import { DeploymentStatusStore, type DeploymentState } from "./status";
+import { DeploymentHistoryStore } from "./history";
 
 class BodyTooLargeError extends Error {}
 
@@ -46,6 +47,7 @@ export interface WebhookServiceOptions {
   deliveries?: DeliveryCache;
   logger?: DeploymentLogger;
   statusStore?: DeploymentStatusStore;
+  historyStore?: DeploymentHistoryStore;
 }
 
 export class WebhookService {
@@ -55,6 +57,7 @@ export class WebhookService {
   readonly #deliveries: DeliveryCache;
   readonly #logger: DeploymentLogger;
   readonly #statusStore?: DeploymentStatusStore;
+  readonly #historyStore?: DeploymentHistoryStore;
   readonly #tasks = new Set<Promise<void>>();
 
   constructor(
@@ -67,6 +70,7 @@ export class WebhookService {
     this.#deployDependencies = options.deployDependencies ?? defaultDeployDependencies(this.#logger);
     this.#deliveries = options.deliveries ?? new DeliveryCache();
     this.#statusStore = options.statusStore;
+    this.#historyStore = options.historyStore;
   }
 
   async #writeStatus(appId: string, commit: string, state: DeploymentState, stage: string, message?: string): Promise<void> {
@@ -83,6 +87,18 @@ export class WebhookService {
     } catch (error) {
       this.#logger.error("cannot write deployment status", {
         app: appId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async #writeHistory(entry: Parameters<DeploymentHistoryStore["append"]>[0]): Promise<void> {
+    if (!this.#historyStore) return;
+    try {
+      await this.#historyStore.append(entry);
+    } catch (error) {
+      this.#logger.error("cannot write deployment history", {
+        app: entry.appId,
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -158,7 +174,9 @@ export class WebhookService {
     }
 
     this.#deliveries.remember(appId, deliveryId);
+    const startedAt = Date.now();
     await this.#writeStatus(appId, push.commit, "accepted", "accepted");
+    await this.#writeHistory({ appId, commit: push.commit, kind: "webhook", state: "accepted", delivery: deliveryId });
     const dependencies: DeployDependencies = {
       ...this.#deployDependencies,
       onStage: async (stage) => {
@@ -167,16 +185,25 @@ export class WebhookService {
       },
     };
     const task = deploy(appId, app, push.commit, dependencies)
-      .then(() => this.#writeStatus(appId, push.commit, "succeeded", "shipped"))
+      .then(async () => {
+        await this.#writeStatus(appId, push.commit, "succeeded", "shipped");
+        await this.#writeHistory({
+          appId, commit: push.commit, kind: "webhook", state: "succeeded", delivery: deliveryId, durationMs: Date.now() - startedAt,
+        });
+      })
       .catch(async (error) => {
         this.#deliveries.forget(appId, deliveryId);
+        const stage = error instanceof DeploymentError ? error.stage : "unknown";
         await this.#writeStatus(
           appId,
           push.commit,
           "failed",
-          error instanceof DeploymentError ? error.stage : "unknown",
+          stage,
           error instanceof DeploymentError ? `${error.stage} failed` : "deployment failed",
         );
+        await this.#writeHistory({
+          appId, commit: push.commit, kind: "webhook", state: "failed", delivery: deliveryId, stage, durationMs: Date.now() - startedAt,
+        });
         this.#logger.error("deployment failed", {
           app: appId,
           commit: push.commit,

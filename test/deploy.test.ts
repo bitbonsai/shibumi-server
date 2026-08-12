@@ -63,7 +63,7 @@ describe("deployment pipeline", () => {
     await deploy("myapp", app, commit, dependencies(runner));
 
     const calls = runner.calls.map(({ command, args }) => [command, ...args]);
-    expect(calls.slice(0, 8)).toEqual([
+    expect(calls.slice(0, 7)).toEqual([
       ["git", "-C", app.checkout, "status", "--porcelain"],
       ["git", "-C", app.checkout, "fetch", "--prune", "origin", app.ref],
       ["git", "-C", app.checkout, "rev-parse", "FETCH_HEAD"],
@@ -71,14 +71,15 @@ describe("deployment pipeline", () => {
       ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "config", "--quiet"],
       ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "build"],
       ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "run", "--rm", "web", "bun", "test"],
-      ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "up", "-d", "--remove-orphans"],
     ]);
-    expect(calls[8]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "ps", "--quiet", "web"]);
-    expect(calls[9]).toEqual(["podman", "container", "inspect", "--format", "{{.Image}}", "container-id"]);
-    expect(calls[10]?.slice(0, 4)).toEqual(["podman", "image", "tag", "sha256:image-id"]);
-    expect(calls[10]?.[4]).toMatch(/^localhost\/shibumi-server\/myapp:release-\d{13}-a{12}$/);
-    expect(calls[11]).toEqual(["podman", "image", "list", "--filter", "reference=localhost/shibumi-server/myapp:release-*", "--format", "{{.Tag}}"]);
-    expect(calls[12]).toEqual(["podman", "image", "prune", "--force"]);
+    expect(calls[7]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "ps", "--quiet", "web"]);
+    expect(calls[10]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "up", "-d", "--remove-orphans"]);
+    expect(calls[11]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "ps", "--quiet", "web"]);
+    expect(calls[12]).toEqual(["podman", "container", "inspect", "--format", "{{.Image}}", "container-id"]);
+    expect(calls[13]?.slice(0, 4)).toEqual(["podman", "image", "tag", "sha256:image-id"]);
+    expect(calls[13]?.[4]).toMatch(/^localhost\/shibumi-server\/myapp:release-\d{13}-a{12}$/);
+    expect(calls[14]).toEqual(["podman", "image", "list", "--filter", "reference=localhost/shibumi-server/myapp:release-*", "--format", "{{.Tag}}"]);
+    expect(calls[15]).toEqual(["podman", "image", "prune", "--force"]);
     expect(runner.calls.find(({ args }) => args.includes("up"))?.options?.env).toEqual({ SHIBUMI_PORT: "9100" });
     expect(runner.calls.find(({ args }) => args.at(-1) === "build")?.options?.timeoutMs).toBe(600_000);
   });
@@ -214,6 +215,21 @@ describe("deployment pipeline", () => {
     expect(runner.calls).toHaveLength(3);
   });
 
+  test("allows rollback only when the SHA is an ancestor of the configured branch", async () => {
+    const runner = new FakeRunner();
+    runner.responses = [
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${"b".repeat(40)}\n`, stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+    ];
+
+    await deploy("myapp", app, commit, dependencies(runner), { allowAncestor: true });
+
+    expect(runner.calls[3]).toMatchObject({ command: "git", args: ["-C", app.checkout, "merge-base", "--is-ancestor", commit, "FETCH_HEAD"] });
+    expect(runner.calls[4]).toMatchObject({ command: "git", args: ["-C", app.checkout, "reset", "--hard", commit] });
+  });
+
   test("does not start the app when the build fails", async () => {
     const runner = new FakeRunner();
     runner.responses = [
@@ -269,6 +285,22 @@ describe("deployment pipeline", () => {
     );
     expect(result.timedOut).toBe(true);
     expect(result.exitCode).not.toBe(0);
+  });
+
+  test("restores the previous image when the new release fails health checks", async () => {
+    const runner = new FakeRunner();
+    runner.responses = [
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${commit}\n`, stderr: "" },
+    ];
+    let healthChecks = 0;
+    const health: Fetcher = async () => new Response("health", { status: ++healthChecks <= app.healthAttempts ? 503 : 200 });
+
+    await expect(deploy("myapp", app, commit, dependencies(runner, health))).rejects.toThrow("health check did not pass");
+
+    expect(runner.calls.some(({ command, args }) => command === "podman" && args[0] === "image" && args[1] === "tag" && args[2] === "sha256:image-id")).toBe(true);
+    expect(runner.calls.some(({ args }) => args.includes("--no-build") && args.includes("--force-recreate"))).toBe(true);
   });
 
   test("reports a health timeout after starting", async () => {

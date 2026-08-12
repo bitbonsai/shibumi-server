@@ -13,6 +13,7 @@ export interface InstallationPaths {
   secrets: string;
   dataDirectory: string;
   statusDirectory: string;
+  historyDirectory: string;
   releasesDirectory: string;
   currentRelease: string;
   binDirectory: string;
@@ -170,6 +171,7 @@ export function installationPaths(home: string): InstallationPaths {
     secrets: join(configDirectory, "secrets.env"),
     dataDirectory,
     statusDirectory: join(dataDirectory, "status"),
+    historyDirectory: join(dataDirectory, "history"),
     releasesDirectory: join(dataDirectory, "releases"),
     currentRelease: join(dataDirectory, "current"),
     binDirectory: join(home, ".local", "bin"),
@@ -257,6 +259,7 @@ export async function initializeInstallation(
   await chmod(paths.configDirectory, 0o700);
   await mkdir(paths.releasesDirectory, { recursive: true, mode: 0o700 });
   await mkdir(paths.statusDirectory, { recursive: true, mode: 0o700 });
+  await mkdir(paths.historyDirectory, { recursive: true, mode: 0o700 });
   await mkdir(paths.binDirectory, { recursive: true, mode: 0o700 });
   await mkdir(paths.systemdDirectory, { recursive: true, mode: 0o700 });
 
@@ -477,6 +480,7 @@ export async function removeApp(
   await atomicWrite(paths.config, `${JSON.stringify(candidate, null, 2)}\n`, 0o600);
   await atomicWrite(paths.secrets, nextSecrets, 0o600);
   await rm(join(paths.statusDirectory, `${appId}.json`), { force: true });
+  await rm(join(paths.historyDirectory, `${appId}.jsonl`), { force: true });
 
   let containerWarning: string | undefined;
   const [executable, ...prefix] = app.composeCommand;

@@ -47,6 +47,10 @@ export interface DeployDependencies {
   onStage?(stage: string): void | Promise<void>;
 }
 
+export interface DeployOptions {
+  allowAncestor?: boolean;
+}
+
 export class DeploymentError extends Error {
   constructor(
     readonly stage: string,
@@ -262,7 +266,67 @@ async function retainReleaseImages(
   }
 }
 
-export async function deploy(appId: string, app: AppConfig, commit: string, dependencies: DeployDependencies): Promise<void> {
+interface RunningRelease {
+  imageId: string;
+  imageName: string;
+}
+
+async function runningRelease(
+  app: AppConfig,
+  composeExecutable: string,
+  compose: string[],
+  options: CommandOptions,
+  dependencies: DeployDependencies,
+): Promise<RunningRelease | undefined> {
+  const container = await dependencies.runner.run(
+    composeExecutable,
+    [...compose, "ps", "--quiet", app.service],
+    { ...options, capture: true },
+  );
+  const containerId = container.exitCode === 0 ? container.stdout.trim().split(/\s+/)[0] : undefined;
+  if (!containerId) return undefined;
+  const [imageId, imageName] = await Promise.all([
+    dependencies.runner.run("podman", ["container", "inspect", "--format", "{{.Image}}", containerId], { capture: true }),
+    dependencies.runner.run("podman", ["container", "inspect", "--format", "{{.Config.Image}}", containerId], { capture: true }),
+  ]);
+  if (imageId.exitCode !== 0 || imageName.exitCode !== 0 || !imageId.stdout.trim() || !imageName.stdout.trim()) return undefined;
+  return { imageId: imageId.stdout.trim(), imageName: imageName.stdout.trim() };
+}
+
+async function restoreRelease(
+  app: AppConfig,
+  release: RunningRelease | undefined,
+  composeExecutable: string,
+  compose: string[],
+  options: CommandOptions,
+  dependencies: DeployDependencies,
+): Promise<void> {
+  try {
+    if (!release) {
+      await runChecked(dependencies, "restore", composeExecutable, [...compose, "down"], options);
+      return;
+    }
+    await runChecked(dependencies, "restore", "podman", ["image", "tag", release.imageId, release.imageName], { capture: true });
+    await runChecked(
+      dependencies,
+      "restore",
+      composeExecutable,
+      [...compose, "up", "-d", "--no-build", "--force-recreate", app.service],
+      options,
+    );
+    await waitForHealth(app, dependencies);
+  } catch (error) {
+    throw new DeploymentError("restore", `previous release could not be restored: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function deploy(
+  appId: string,
+  app: AppConfig,
+  commit: string,
+  dependencies: DeployDependencies,
+  deployOptions: DeployOptions = {},
+): Promise<void> {
   const startedAt = Date.now();
   await dependencies.onStage?.("preflight");
   await checkResources(app, dependencies);
@@ -274,7 +338,9 @@ export async function deploy(appId: string, app: AppConfig, commit: string, depe
 
   await git(["fetch", "--prune", "origin", app.ref], "fetch");
   const fetched = await git(["rev-parse", "FETCH_HEAD"], "verify", true);
-  if (fetched.stdout.trim().toLowerCase() !== commit) {
+  if (deployOptions.allowAncestor) {
+    await git(["merge-base", "--is-ancestor", commit, "FETCH_HEAD"], "verify");
+  } else if (fetched.stdout.trim().toLowerCase() !== commit) {
     throw new DeploymentError("verify", "fetched branch no longer matches the webhook commit");
   }
   await git(["reset", "--hard", commit], "checkout");
@@ -306,9 +372,15 @@ export async function deploy(appId: string, app: AppConfig, commit: string, depe
       options,
     );
   }
-  await runChecked(dependencies, "start", composeExecutable, [...compose, "up", "-d", "--remove-orphans"], options);
-  await dependencies.onStage?.("health");
-  await waitForHealth(app, dependencies);
+  const previous = await runningRelease(app, composeExecutable, compose, options, dependencies);
+  try {
+    await runChecked(dependencies, "start", composeExecutable, [...compose, "up", "-d", "--remove-orphans"], options);
+    await dependencies.onStage?.("health");
+    await waitForHealth(app, dependencies);
+  } catch (error) {
+    await restoreRelease(app, previous, composeExecutable, compose, options, dependencies);
+    throw error;
+  }
   await retainReleaseImages(appId, app, commit, startedAt, composeExecutable, compose, options, dependencies);
 
   dependencies.logger.info("deployment succeeded", {

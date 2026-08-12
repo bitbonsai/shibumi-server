@@ -264,7 +264,9 @@ describe("app registration", () => {
     }), services, checkouts);
     const paths = installationPaths(home);
     await mkdir(paths.statusDirectory, { recursive: true });
+    await mkdir(paths.historyDirectory, { recursive: true });
     await writeFile(join(paths.statusDirectory, "example-com.json"), "{}\n");
+    await writeFile(join(paths.historyDirectory, "example-com.jsonl"), "{}\n");
     const runner = new FakeRunner();
 
     expect((await registeredApps(home)).map((app) => app.domain)).toEqual(["example.com", "second.example"]);
@@ -275,6 +277,7 @@ describe("app registration", () => {
       "podman", "compose", "--project-name", "example-com", "--file", "/srv/shibumi/apps/example-com/compose.yaml", "down",
     ]);
     expect(await Bun.file(join(paths.statusDirectory, "example-com.json")).exists()).toBe(false);
+    expect(await Bun.file(join(paths.historyDirectory, "example-com.jsonl")).exists()).toBe(false);
     expect(await readFile(paths.secrets, "utf8")).not.toContain("SHIBUMI_SECRET_EXAMPLE_COM=");
     expect(await readFile(paths.secrets, "utf8")).toContain("SHIBUMI_SECRET_SECOND_EXAMPLE=");
     expect(services.restarts).toBe(3);

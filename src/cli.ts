@@ -9,11 +9,11 @@ import { loadConfig, validateSecrets } from "./config";
 import { addApp, initializeInstallation, installationPaths, uninstallInstallation } from "./install";
 import { WebhookService } from "./server";
 import { DeploymentStatusStore } from "./status";
+import { DeploymentHistoryStore } from "./history";
 import { updateToLatest, warnIfUpdateAvailable } from "./update";
-import { BRAND, stage } from "./terminal-ui";
 
 function requireLinux(): void {
-  if (process.platform !== "linux") throw new Error("init, update, add, and remove require Linux with a systemd user session");
+  if (process.platform !== "linux") throw new Error("this command requires Linux with a systemd user session");
 }
 
 function supportsColor(): boolean {
@@ -33,7 +33,11 @@ async function serve(configPath: string, statusDirectory: string): Promise<void>
   const config = await loadConfig(configPath);
   validateSecrets(config);
 
-  const service = new WebhookService(config, { statusStore: new DeploymentStatusStore(statusDirectory) });
+  const paths = installationPaths(homedir());
+  const service = new WebhookService(config, {
+    statusStore: new DeploymentStatusStore(statusDirectory),
+    historyStore: new DeploymentHistoryStore(paths.historyDirectory),
+  });
   const server = Bun.serve({
     hostname: config.listen.hostname,
     port: config.listen.port,
@@ -71,12 +75,10 @@ try {
     });
   } else if (command.name === "update") {
     requireLinux();
-    console.log(BRAND);
-    console.log(stage("checking", "npm registry"));
     const result = await updateToLatest(packageJson.version, installRelease);
     console.log(result.updated
-      ? stage("updated", `shibumi-server ${result.version}`, "success")
-      : stage("current", `shibumi-server ${result.version}`, "confirmed"));
+      ? `Updated shibumi-server to ${result.version}.`
+      : `shibumi-server ${result.version} is already current.`);
   } else if (command.name === "init") {
     requireLinux();
     const result = await initializeInstallation({
@@ -84,10 +86,9 @@ try {
       packageRoot: resolve(import.meta.dir, ".."),
       bunExecutable: process.execPath,
     });
-    console.log(BRAND);
-    console.log(stage("installed", `shibumi-server ${result.version}`, "confirmed"));
-    console.log(stage("launcher", result.paths.shortLauncher, "info"));
-    console.log(stage("next", "shis add example.com", "action"));
+    console.log(`Installed shibumi-server ${result.version} at ${result.paths.currentRelease}.`);
+    console.log(`Launcher: ${result.paths.shortLauncher}`);
+    console.log("Next: shis add example.com");
   } else if (command.name === "uninstall") {
     requireLinux();
     if (command.purge && !command.yes) {
@@ -95,12 +96,10 @@ try {
       if (!await confirmPurge()) process.exit(0);
     }
     const paths = await uninstallInstallation(homedir(), command.purge);
-    console.log(BRAND);
-    console.log(stage("removed", "service, launchers, and installed releases", "success"));
-    console.log(command.purge
-      ? stage("config", "local config and webhook secrets removed", "confirmed")
-      : stage("config", `preserved in ${paths.configDirectory}`, "info"));
-    console.log(stage("apps", "checkouts, containers, Caddy, and GitHub unchanged", "info"));
+    console.log("Removed shibumi-server service, launchers, and installed releases.");
+    if (command.purge) console.log("Removed local config and webhook secrets.");
+    else console.log(`Preserved config and secrets in ${paths.configDirectory}.`);
+    console.log("App checkouts, containers, Caddy, and GitHub settings were not changed.");
   } else if (command.name === "list") {
     const { runListApps } = await import("./setup");
     await runListApps(homedir());
@@ -127,6 +126,15 @@ try {
     if (command.json) console.log(JSON.stringify(status ?? null));
     else if (status) console.log(`${status.appId} ${status.commit} ${status.state} ${status.stage}${status.message ? `: ${status.message}` : ""}`);
     else console.log(`No deployment status for ${command.appId}${command.commit ? ` at ${command.commit}` : ""}.`);
+  } else if (command.name === "history") {
+    const entries = await new DeploymentHistoryStore(installationPaths(homedir()).historyDirectory).read(command.appId);
+    if (command.json) console.log(JSON.stringify(entries));
+    else if (entries.length === 0) console.log(`No deployment history for ${command.appId}.`);
+    else for (const entry of entries) console.log(`${entry.at} ${entry.kind} ${entry.state} ${entry.commit}${entry.stage ? ` ${entry.stage}` : ""}${entry.durationMs === undefined ? "" : ` ${entry.durationMs}ms`}`);
+  } else if (command.name === "rollback") {
+    requireLinux();
+    const { runRollback } = await import("./setup");
+    await runRollback(homedir(), command.appId, command.commit, command.yes);
   } else if (command.name === "add") {
     requireLinux();
     const { name: _, ...options } = command;
@@ -140,20 +148,18 @@ try {
       });
       const paths = installationPaths(homedir());
       if (options.dryRun) {
-        console.log(BRAND);
-        console.log(stage("preview", result.appId));
-        console.log(stage("checkout", options.checkout, "info"));
-        console.log(stage("webhook", `https://${options.domain}/hooks/github/${result.appId}`, "info"));
-        console.log(stage("secret", result.secretEnvironmentVariable, "info"));
-        console.log(stage("upstream", `127.0.0.1:${options.hostPort}`, "info"));
-        console.log(stage("done", "No changes made", "success"));
+        console.log(`Preview for ${result.appId}:`);
+        console.log(`Checkout: ${options.checkout}`);
+        console.log(`Webhook URL: https://${options.domain}/hooks/github/${result.appId}`);
+        console.log(`Webhook secret variable: ${result.secretEnvironmentVariable}`);
+        console.log(`Caddy upstream: 127.0.0.1:${options.hostPort}`);
+        console.log("Preview complete. No changes made.");
       } else {
-        console.log(BRAND);
-        console.log(stage("added", `${result.appId}; shibumi-server restarted`, "success"));
-        console.log(stage("webhook", `https://${options.domain}/hooks/github/${result.appId}`, "info"));
-        console.log(stage("secret", `${result.secretEnvironmentVariable} in ${paths.secrets}`, "info"));
-        console.log(stage("upstream", `127.0.0.1:${options.hostPort}`, "info"));
-        console.log(stage("next", "Add webhook route to Caddy; Caddy and GitHub remain unchanged", "action"));
+        console.log(`Added ${result.appId} and restarted shibumi-server.`);
+        console.log(`Webhook URL: https://${options.domain}/hooks/github/${result.appId}`);
+        console.log(`Webhook secret: ${result.secretEnvironmentVariable} in ${paths.secrets}`);
+        console.log(`Caddy upstream: 127.0.0.1:${options.hostPort}`);
+        console.log("Add the webhook route to Caddy before the app's normal handler; Caddy and GitHub are not modified automatically.");
       }
     } else {
       const { runInteractiveAdd } = await import("./setup");
