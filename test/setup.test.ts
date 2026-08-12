@@ -85,7 +85,7 @@ describe("interactive setup", () => {
   });
 
   test("guides manual registration while keeping ship setup concise", () => {
-    expect(registrationOutcome(false, false)).toBe("Next: https://shibumistack.dev/ship\nRun bun run ship:setup from your local project root.");
+    expect(registrationOutcome(false, false)).toBe("Next: https://shibumistack.dev/ship\n   Run bun run ship:setup from your local project root.");
     expect(registrationOutcome(true, false)).toBe("Registration is current.");
   });
 
