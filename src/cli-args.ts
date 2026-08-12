@@ -39,30 +39,30 @@ export function formatHelp(color = false): string {
   const command = (value: string) => paint(value, "bold");
   const detail = (value: string) => paint(value, "muted");
 
-  return `${paint("渋み", "accent")}  ${paint("shibumi-server", "bold")}
+  return `${paint("渋み", "accent")}  ${paint("shis", "bold")} ${detail("(shibumi-server)")}
 ${detail("Small, secure webhook deploys for rootless Podman.")}
 
 ${heading("USAGE")}
-  ${command("shibumi-server")} [command]
-  ${command("shibumi-server --help")}                  Show help
-  ${command("shibumi-server --version")}               Show version
+  ${command("shis")} [command]
+  ${command("shis --help")}                            Show help
+  ${command("shis --version")}                         Show version
 
 ${heading("SETUP")}
-  ${command("shibumi-server")}                         Guided installation
-  ${command("shibumi-server setup")}                   Guided installation
-  ${command("shibumi-server init")}                    Install only (automation)
-  ${command("shibumi-server update")}                  Install latest stable release
-  ${command("shibumi-server uninstall")} [--purge [--yes]]
+  ${command("shis")}                                   Guided installation
+  ${command("shis setup")}                             Guided installation
+  ${command("shis init")}                              Install only (automation)
+  ${command("shis update")}                            Install latest stable release
+  ${command("shis uninstall")} [--purge [--yes]]
 
 ${heading("APPS")}
-  ${command("shibumi-server list")}                         List registered apps
-  ${command("shibumi-server remove <domain|app-id>")} [--yes]
+  ${command("shis list")}                              List registered apps
+  ${command("shis remove <domain|app-id>")} [--yes]
       Remove an app; preserve checkout, volumes, images, and GitHub webhook
 
-  ${command("shibumi-server add <domain>")} [--dry-run]
+  ${command("shis add <domain>")} [--dry-run]
       Add or preview an app interactively
 
-  ${command("shibumi-server add <domain> \\")}
+  ${command("shis add <domain> \\")}
     ${command("--repository <repository> \\")}
     ${command("--checkout <absolute-path> \\")}
     ${command("--port <port> [--dry-run] [options] \\")}
@@ -70,12 +70,12 @@ ${heading("APPS")}
       Add or preview an app with explicit settings
 
 ${heading("OPERATIONS")}
-  ${command("shibumi-server status <app-id>")} [--commit <sha>] [--json]
-  ${command("shibumi-server caddy-cutover <app-id>")}
-  ${command("shibumi-server client-config <app-id>")} [--server-hostname <host>]
-  ${command("shibumi-server webhook-secret <app-id>")}
-  ${command("shibumi-server check --config <path>")}
-  ${command("shibumi-server serve --config <path>")}
+  ${command("shis status <app-id>")} [--commit <sha>] [--json]
+  ${command("shis caddy-cutover <app-id>")}
+  ${command("shis client-config <app-id>")} [--server-hostname <host>]
+  ${command("shis webhook-secret <app-id>")}
+  ${command("shis check --config <path>")}
+  ${command("shis serve --config <path>")}
 
 ${heading("ADD OPTIONS")}
   ${command("--repository <repository>")}       github:owner/repo or GitHub URL

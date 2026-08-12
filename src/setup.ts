@@ -12,6 +12,7 @@ import { addApp, appIdForDomain, initializeInstallation, installationPaths, mark
 import { normalizeGitHubRepository } from "./repository";
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const BRAND = "渋み  shis (shibumi-server)";
 
 export type SetupAnswers = Omit<AddAppOptions, "home">;
 
@@ -334,7 +335,7 @@ export async function runInteractiveSetup(options: {
   packageRoot: string;
   bunExecutable: string;
 }): Promise<void> {
-  intro("渋み  shibumi-server");
+  intro(BRAND);
   const issues = await setupRequirementIssues();
   if (issues.length > 0) {
     cancel(`Setup needs attention:\n${issues.map((issue) => `  • ${issue}`).join("\n")}\n\nInstall or configure these requirements, then run setup again.`);
@@ -363,17 +364,17 @@ export async function runInteractiveSetup(options: {
   }
 
   outro([
-    `Launcher: ${installation.paths.launcher}`,
-    "Next: shibumi-server add example.com",
+    `Launcher: ${installation.paths.shortLauncher}`,
+    "Next: shis add example.com",
     "The service starts after its first app is added.",
   ].join("\n"));
 }
 
 export async function runListApps(home: string): Promise<void> {
-  intro("渋み  apps");
+  intro(BRAND);
   const apps = await registeredApps(home);
   if (apps.length === 0) {
-    outro("No apps registered. Add one with: shibumi-server add <domain>");
+    outro("No apps registered. Add one with: shis add <domain>");
     return;
   }
   for (const app of apps) {
@@ -389,9 +390,9 @@ export async function runListApps(home: string): Promise<void> {
 }
 
 export async function runRemoveApp(home: string, selector: string, yes = false): Promise<void> {
-  intro("渋み  remove an app");
+  intro(BRAND);
   const app = (await registeredApps(home)).find((item) => item.appId === selector || item.domain === selector);
-  if (!app) throw new Error(`unknown app: ${selector}.\n\nNext: run shibumi-server list and choose a domain or app ID.`);
+  if (!app) throw new Error(`unknown app: ${selector}.\n\nNext: run shis list and choose a domain or app ID.`);
   log.info([
     `Domain      ${app.domain}`,
     `App ID      ${app.appId}`,
@@ -414,7 +415,7 @@ export async function runRemoveApp(home: string, selector: string, yes = false):
     try {
       await applyCaddyWithSudo({ version: 1, action: "remove", appId: app.appId, domain: app.domain });
     } catch (error) {
-      throw new Error(`${error instanceof Error ? error.message : String(error)}\n\nNext: fix Caddy validation, then rerun shibumi-server remove ${app.appId}.`);
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\n\nNext: fix Caddy validation, then rerun shis remove ${app.appId}.`);
     }
   }
 
@@ -422,7 +423,7 @@ export async function runRemoveApp(home: string, selector: string, yes = false):
   try {
     result = await removeApp(home, app.appId);
   } catch (error) {
-    throw new Error(`${error instanceof Error ? error.message : String(error)}\n\nNext: rerun shibumi-server remove ${app.appId}; Caddy removal is idempotent.`);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\n\nNext: rerun shis remove ${app.appId}; Caddy removal is idempotent.`);
   }
   log.success(`${app.domain} removed from shibumi-server`);
   log.info([
@@ -441,7 +442,7 @@ export async function runRemoveApp(home: string, selector: string, yes = false):
 }
 
 export async function runCaddyCutover(home: string, appId: string): Promise<void> {
-  intro("渋み  Caddy cutover");
+  intro(BRAND);
   const paths = installationPaths(home);
   const config = await loadConfig(paths.config);
   const app = config.apps[appId];
@@ -473,7 +474,7 @@ export async function runCaddyCutover(home: string, appId: string): Promise<void
 }
 
 export async function runInteractiveAdd(options: { home: string } & Partial<SetupAnswers>): Promise<void> {
-  intro("渋み  add an app");
+  intro(BRAND);
   const { home, ...provided } = options;
   let existing: Partial<SetupAnswers> = {};
   let existingCaddyMode: AddAppOptions["caddyMode"];

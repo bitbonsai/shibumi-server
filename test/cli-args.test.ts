@@ -3,11 +3,11 @@ import { formatHelp, parseCliArgs } from "../src/cli-args";
 
 describe("CLI arguments", () => {
   test("formats branded help with optional terminal color", () => {
-    expect(formatHelp()).toContain("渋み  shibumi-server");
+    expect(formatHelp()).toContain("渋み  shis (shibumi-server)");
     expect(formatHelp()).not.toContain("\x1b[");
     expect(formatHelp(true)).toContain("\x1b[38;5;208m渋み");
-    expect(formatHelp()).toContain("shibumi-server list");
-    expect(formatHelp()).toContain("shibumi-server remove <domain|app-id>");
+    expect(formatHelp()).toContain("shis list");
+    expect(formatHelp()).toContain("shis remove <domain|app-id>");
   });
 
   test("parses help, version, and interactive setup", () => {

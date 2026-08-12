@@ -38,7 +38,7 @@ describe("update checks", () => {
     );
 
     expect(warnings).toEqual([
-      "Update available: shibumi-server 0.1.2 → 0.1.4\nRun: shibumi-server update",
+      "Update available: shibumi-server 0.1.2 → 0.1.4\nRun: shis update",
     ]);
   });
 

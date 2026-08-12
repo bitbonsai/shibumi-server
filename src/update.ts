@@ -1,6 +1,6 @@
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const LATEST_URL = "https://registry.npmjs.org/shibumi-server/latest";
-const UPDATE_COMMAND = "shibumi-server update";
+const UPDATE_COMMAND = "shis update";
 
 type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 

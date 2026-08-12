@@ -17,6 +17,7 @@ export interface InstallationPaths {
   currentRelease: string;
   binDirectory: string;
   launcher: string;
+  shortLauncher: string;
   systemdDirectory: string;
   service: string;
 }
@@ -173,6 +174,7 @@ export function installationPaths(home: string): InstallationPaths {
     currentRelease: join(dataDirectory, "current"),
     binDirectory: join(home, ".local", "bin"),
     launcher: join(home, ".local", "bin", "shibumi-server"),
+    shortLauncher: join(home, ".local", "bin", "shis"),
     systemdDirectory: join(home, ".config", "systemd", "user"),
     service: join(home, ".config", "systemd", "user", "shibumi-server.service"),
   };
@@ -288,7 +290,9 @@ export async function initializeInstallation(
   await symlink(relative(paths.dataDirectory, release), nextLink);
   await rename(nextLink, paths.currentRelease);
 
-  await atomicWrite(paths.launcher, launcher(paths, bunExecutable), 0o755);
+  const launcherSource = launcher(paths, bunExecutable);
+  await atomicWrite(paths.launcher, launcherSource, 0o755);
+  await atomicWrite(paths.shortLauncher, launcherSource, 0o755);
 
   if (!await exists(paths.config)) {
     await atomicWrite(paths.config, `${JSON.stringify(initialConfig(), null, 2)}\n`, 0o600);
@@ -315,6 +319,7 @@ export async function uninstallInstallation(
     await services.reloadUnits();
   }
   await rm(paths.launcher, { force: true });
+  await rm(paths.shortLauncher, { force: true });
   await rm(paths.dataDirectory, { recursive: true, force: true });
   if (purge) await rm(paths.configDirectory, { recursive: true, force: true });
   return paths;
@@ -451,7 +456,7 @@ export async function removeApp(
   const root = await rawConfig(paths.config);
   const parsed = parseConfig(root);
   const match = Object.entries(parsed.apps).find(([appId, app]) => appId === selector || app.domain === selector);
-  if (!match) throw new Error(`unknown app: ${selector}.\n\nNext: run shibumi-server list and choose a domain or app ID.`);
+  if (!match) throw new Error(`unknown app: ${selector}.\n\nNext: run shis list and choose a domain or app ID.`);
   const [appId, app] = match;
   const appRecord: RegisteredApp = {
     appId,

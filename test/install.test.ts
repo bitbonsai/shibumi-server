@@ -75,6 +75,8 @@ describe("pinned installation", () => {
     const launcher = await readFile(paths.launcher, "utf8");
     expect(launcher).toContain(`exec '${process.execPath}'`);
     expect((await stat(paths.launcher)).mode & 0o777).toBe(0o755);
+    expect(await readFile(paths.shortLauncher, "utf8")).toBe(launcher);
+    expect((await stat(paths.shortLauncher)).mode & 0o777).toBe(0o755);
     expect(await readFile(join(paths.currentRelease, "src", "cli.ts"), "utf8")).toContain("initializeInstallation");
     expect(JSON.parse(await readFile(join(paths.currentRelease, "node_modules", "@clack", "prompts", "package.json"), "utf8")).name)
       .toBe("@clack/prompts");
@@ -136,6 +138,7 @@ describe("uninstall", () => {
     await uninstallInstallation(home, false, services);
 
     await expect(stat(result.paths.launcher)).rejects.toThrow();
+    await expect(stat(result.paths.shortLauncher)).rejects.toThrow();
     await expect(stat(result.paths.dataDirectory)).rejects.toThrow();
     await expect(stat(result.paths.service)).rejects.toThrow();
     expect(await readFile(result.paths.config, "utf8")).toContain('"apps"');

@@ -8,6 +8,10 @@ test("release version uses a preferred digit sum", () => {
   expect([1, 2, 3, 5, 7, 9]).toContain(sum);
 });
 
+test("publishes short and compatible CLI names", () => {
+  expect(packageJson.bin).toEqual({ shis: "./src/cli.ts", "shibumi-server": "./src/cli.ts" });
+});
+
 test("published files use an explicit allowlist", () => {
   expect(packageJson.files).toEqual(expect.arrayContaining(["src", "docs", "examples", "install.sh", "README.md", "LICENSE", "runtime-lock.json"]));
   expect(packageJson.files).not.toContain("config.json");

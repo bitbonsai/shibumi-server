@@ -1,10 +1,11 @@
 {
   "name": "shibumi-server",
-  "version": "0.1.33",
+  "version": "0.1.35",
   "description": "Small, secure webhook deploy service for rootless Podman.",
   "license": "MIT",
   "type": "module",
   "bin": {
+    "shis": "./src/cli.ts",
     "shibumi-server": "./src/cli.ts"
   },
   "exports": "./src/index.ts",
