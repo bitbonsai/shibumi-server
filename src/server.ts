@@ -5,6 +5,7 @@ import { isGitHubSignature, normalizeGitHubDeliveryId, parseGitHubPush, verifyGi
 import { AppLocks } from "./locks";
 import { DeploymentStatusStore, type DeploymentState } from "./status";
 import { DeploymentHistoryStore } from "./history";
+import { DeploymentQueueStore, type QueuedDeployment } from "./queue";
 
 class BodyTooLargeError extends Error {}
 
@@ -48,6 +49,7 @@ export interface WebhookServiceOptions {
   logger?: DeploymentLogger;
   statusStore?: DeploymentStatusStore;
   historyStore?: DeploymentHistoryStore;
+  queueStore?: DeploymentQueueStore;
 }
 
 export class WebhookService {
@@ -58,7 +60,10 @@ export class WebhookService {
   readonly #logger: DeploymentLogger;
   readonly #statusStore?: DeploymentStatusStore;
   readonly #historyStore?: DeploymentHistoryStore;
+  readonly #queueStore?: DeploymentQueueStore;
   readonly #tasks = new Set<Promise<void>>();
+  readonly #queueOperations = new Map<string, Promise<void>>();
+  readonly #activeStatuses = new Map<string, { commit: string; state: DeploymentState; stage: string; message?: string; output?: string }>();
 
   constructor(
     readonly config: ServerConfig,
@@ -71,11 +76,14 @@ export class WebhookService {
     this.#deliveries = options.deliveries ?? new DeliveryCache();
     this.#statusStore = options.statusStore;
     this.#historyStore = options.historyStore;
+    this.#queueStore = options.queueStore;
   }
 
   async #writeStatus(appId: string, commit: string, state: DeploymentState, stage: string, message?: string, output?: string): Promise<void> {
+    this.#activeStatuses.set(appId, { commit, state, stage, message, output });
     if (!this.#statusStore) return;
     try {
+      const queuedCommit = (await this.#queueStore?.read(appId))?.commit;
       await this.#statusStore.write({
         appId,
         commit,
@@ -84,6 +92,7 @@ export class WebhookService {
         message,
         output,
         url: this.config.apps[appId]?.domain ? `https://${this.config.apps[appId].domain}` : undefined,
+        queuedCommit,
       });
     } catch (error) {
       this.#logger.error("cannot write deployment status", {
@@ -101,6 +110,91 @@ export class WebhookService {
       this.#logger.error("cannot write deployment history", {
         app: entry.appId,
         error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async #withQueue<T>(appId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.#queueOperations.get(appId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const current = previous.then(() => gate);
+    this.#queueOperations.set(appId, current);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.#queueOperations.get(appId) === current) this.#queueOperations.delete(appId);
+    }
+  }
+
+  #start(appId: string, initial: QueuedDeployment): void {
+    const app = this.config.apps[appId];
+    if (!app) return;
+    const task = (async () => {
+      let request: QueuedDeployment | undefined = initial;
+      while (request) {
+        const { commit, delivery } = request;
+        const startedAt = Date.now();
+        await this.#writeStatus(appId, commit, "accepted", "accepted");
+        await this.#writeHistory({ appId, commit, kind: "webhook", state: "accepted", delivery });
+        let latestOutput: string | undefined;
+        const dependencies: DeployDependencies = {
+          ...this.#deployDependencies,
+          onStage: async (stage) => {
+            latestOutput = undefined;
+            await this.#deployDependencies.onStage?.(stage);
+            await this.#writeStatus(appId, commit, "running", stage);
+          },
+          onOutput: async (stage, line) => {
+            await this.#deployDependencies.onOutput?.(stage, line);
+            const output = line.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 512);
+            if (output) {
+              latestOutput = output;
+              await this.#writeStatus(appId, commit, "running", stage, undefined, output);
+            }
+          },
+        };
+        try {
+          await deploy(appId, app, commit, dependencies);
+          await this.#writeStatus(appId, commit, "succeeded", "shipped");
+          await this.#writeHistory({ appId, commit, kind: "webhook", state: "succeeded", delivery, durationMs: Date.now() - startedAt });
+        } catch (error) {
+          this.#deliveries.forget(appId, delivery);
+          const stage = error instanceof DeploymentError ? error.stage : "unknown";
+          await this.#writeStatus(
+            appId,
+            commit,
+            "failed",
+            stage,
+            (error instanceof Error ? error.message : "deployment failed").replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 512),
+            latestOutput,
+          );
+          await this.#writeHistory({ appId, commit, kind: "webhook", state: "failed", delivery, stage, durationMs: Date.now() - startedAt });
+          this.#logger.error("deployment failed", { app: appId, commit, error: error instanceof Error ? error.message : String(error) });
+        }
+        request = await this.#withQueue(appId, async () => {
+          const queued = await this.#queueStore?.read(appId);
+          if (queued) await this.#queueStore?.remove(appId);
+          else this.#locks.release(appId);
+          return queued;
+        });
+      }
+    })().catch((error) => {
+      this.#locks.release(appId);
+      this.#logger.error("deployment queue failed", { app: appId, error: error instanceof Error ? error.message : String(error) });
+    });
+    this.#tasks.add(task);
+    void task.finally(() => this.#tasks.delete(task));
+  }
+
+  async resumeQueued(): Promise<void> {
+    for (const queued of await this.#queueStore?.list() ?? []) {
+      await this.#withQueue(queued.appId, async () => {
+        if (!this.#locks.acquire(queued.appId)) return;
+        await this.#queueStore?.remove(queued.appId);
+        this.#start(queued.appId, queued);
       });
     }
   }
@@ -163,72 +257,32 @@ export class WebhookService {
       return json(200, { status: "duplicate", app: appId, delivery: deliveryId });
     }
 
-    if (!this.#locks.acquire(appId)) {
-      return json(
-        409,
-        {
-          error: "deployment_in_progress",
-          message: `A deployment for ${appId} is already running.`,
-        },
-        { "Retry-After": "60" },
-      );
-    }
-
     this.#deliveries.remember(appId, deliveryId);
-    const startedAt = Date.now();
-    await this.#writeStatus(appId, push.commit, "accepted", "accepted");
-    await this.#writeHistory({ appId, commit: push.commit, kind: "webhook", state: "accepted", delivery: deliveryId });
-    let latestOutput: string | undefined;
-    const dependencies: DeployDependencies = {
-      ...this.#deployDependencies,
-      onStage: async (stage) => {
-        latestOutput = undefined;
-        await this.#deployDependencies.onStage?.(stage);
-        await this.#writeStatus(appId, push.commit, "running", stage);
-      },
-      onOutput: async (stage, line) => {
-        await this.#deployDependencies.onOutput?.(stage, line);
-        const output = line.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 512);
-        if (output) {
-          latestOutput = output;
-          await this.#writeStatus(appId, push.commit, "running", stage, undefined, output);
+    return this.#withQueue(appId, async () => {
+      if (this.#locks.has(appId)) {
+        const active = this.#activeStatuses.get(appId) ?? await this.#statusStore?.read(appId);
+        if (active?.commit === push.commit && ["accepted", "running"].includes(active.state)) {
+          return json(202, { status: "active", app: appId, commit: push.commit });
         }
-      },
-    };
-    const task = deploy(appId, app, push.commit, dependencies)
-      .then(async () => {
-        await this.#writeStatus(appId, push.commit, "succeeded", "shipped");
-        await this.#writeHistory({
-          appId, commit: push.commit, kind: "webhook", state: "succeeded", delivery: deliveryId, durationMs: Date.now() - startedAt,
-        });
-      })
-      .catch(async (error) => {
-        this.#deliveries.forget(appId, deliveryId);
-        const stage = error instanceof DeploymentError ? error.stage : "unknown";
-        await this.#writeStatus(
-          appId,
-          push.commit,
-          "failed",
-          stage,
-          (error instanceof Error ? error.message : "deployment failed").replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 512),
-          latestOutput,
-        );
-        await this.#writeHistory({
-          appId, commit: push.commit, kind: "webhook", state: "failed", delivery: deliveryId, stage, durationMs: Date.now() - startedAt,
-        });
-        this.#logger.error("deployment failed", {
+        if (!this.#queueStore) {
+          this.#deliveries.forget(appId, deliveryId);
+          return json(409, { error: "deployment_in_progress", message: `A deployment for ${appId} is already running.` });
+        }
+        const previous = await this.#queueStore.replace(appId, push.commit, deliveryId);
+        if (previous && previous.delivery !== deliveryId) this.#deliveries.forget(appId, previous.delivery);
+        if (active) await this.#writeStatus(appId, active.commit, active.state, active.stage, active.message, active.output);
+        return json(202, {
+          status: previous?.commit === push.commit ? "queued" : previous ? "replaced" : "queued",
           app: appId,
           commit: push.commit,
-          error: error instanceof Error ? error.message : String(error),
+          ...(previous && previous.commit !== push.commit ? { replaced: previous.commit } : {}),
         });
-      })
-      .finally(() => {
-        this.#locks.release(appId);
-      });
-    this.#tasks.add(task);
-    void task.finally(() => this.#tasks.delete(task));
+      }
 
-    return json(202, { status: "accepted", app: appId, commit: push.commit });
+      this.#locks.acquire(appId);
+      this.#start(appId, { version: 1, appId, commit: push.commit, delivery: deliveryId, queuedAt: new Date().toISOString() });
+      return json(202, { status: "accepted", app: appId, commit: push.commit });
+    });
   }
 
   async waitForIdle(): Promise<void> {

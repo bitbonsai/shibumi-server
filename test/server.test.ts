@@ -1,8 +1,16 @@
 import { createHmac } from "node:crypto";
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseConfig } from "../src/config";
 import type { CommandOptions, CommandResult, CommandRunner, DeployDependencies } from "../src/deploy";
 import { WebhookService } from "../src/server";
+import { DeploymentQueueStore } from "../src/queue";
+import { DeploymentStatusStore } from "../src/status";
+
+const roots: string[] = [];
+afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
 const secret = "s".repeat(32);
 const commit = "a".repeat(40);
@@ -159,26 +167,42 @@ describe("webhook server", () => {
     expect(runner.calls).toBe(2);
   });
 
-  test("returns 409 while the same app is deploying", async () => {
+  test("queues the latest commit while the same app is deploying", async () => {
     let releaseBuild!: () => void;
     const buildBlocked = new Promise<void>((resolve) => { releaseBuild = resolve; });
     class BlockingRunner extends SuccessfulRunner {
+      builds = 0;
+
       override async run(command: string, args: string[], options?: CommandOptions): Promise<CommandResult> {
-        if (command === "podman" && args.at(-1) === "build") await buildBlocked;
+        if (args.includes("rev-parse")) return { exitCode: 0, stdout: `${this.builds === 0 ? commit : "c".repeat(40)}\n`, stderr: "" };
+        if (command === "podman" && args.at(-1) === "build") {
+          this.builds += 1;
+          if (this.builds === 1) await buildBlocked;
+        }
         return super.run(command, args, options);
       }
     }
 
-    const receiver = service(new BlockingRunner());
-    expect((await receiver.handle(request(payload()))).status).toBe(202);
-    const conflict = await receiver.handle(request(payload()));
-    expect(conflict.status).toBe(409);
-    expect(conflict.headers.get("retry-after")).toBe("60");
-    expect(await conflict.json()).toEqual({
-      error: "deployment_in_progress",
-      message: "A deployment for myapp is already running.",
+    const directory = await mkdtemp(join(tmpdir(), "shibumi-server-queue-"));
+    roots.push(directory);
+    const receiver = new WebhookService(config, {
+      environment: { SHIBUMI_SECRET_MYAPP: secret },
+      deployDependencies: dependencies(new BlockingRunner()),
+      logger: { info() {}, error() {} },
+      statusStore: new DeploymentStatusStore(join(directory, "status")),
+      queueStore: new DeploymentQueueStore(join(directory, "queue")),
     });
+    expect((await receiver.handle(request(payload()))).status).toBe(202);
+    const queuedCommit = "c".repeat(40);
+    const queued = await receiver.handle(request(payload({ after: queuedCommit })));
+    expect(queued.status).toBe(202);
+    expect(await queued.json()).toEqual({ status: "queued", app: "myapp", commit: queuedCommit });
+    expect(await new DeploymentStatusStore(join(directory, "status")).read("myapp", queuedCommit))
+      .toMatchObject({ commit, queuedCommit });
     releaseBuild();
     await receiver.waitForIdle();
+    expect(await new DeploymentStatusStore(join(directory, "status")).read("myapp", queuedCommit))
+      .toMatchObject({ commit: queuedCommit, state: "succeeded" });
+    expect(await new DeploymentQueueStore(join(directory, "queue")).read("myapp")).toBeUndefined();
   });
 });

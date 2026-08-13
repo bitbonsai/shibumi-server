@@ -231,7 +231,7 @@ function serviceUnit(paths: InstallationPaths, bunExecutable: string): string {
   systemdPath(bunExecutable);
   systemdPath(join(paths.currentRelease, "src", "cli.ts"));
   systemdPath(paths.config);
-  return `[Unit]\nDescription=Shibumi webhook deploy service\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=${workingDirectory}\nEnvironmentFile=${environmentFile}\nExecStart=${systemdQuote(bunExecutable)} ${systemdQuote(join(paths.currentRelease, "src", "cli.ts"))} serve --config ${systemdQuote(paths.config)}\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nMemoryHigh=1280M\nMemoryMax=1536M\nMemorySwapMax=256M\nCPUQuota=200%\nTasksMax=512\nOOMPolicy=stop\nNoNewPrivileges=true\nPrivateTmp=true\n\n[Install]\nWantedBy=default.target\n`;
+  return `[Unit]\nDescription=Shibumi webhook deploy service\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=${workingDirectory}\nEnvironmentFile=${environmentFile}\nExecStart=${systemdQuote(bunExecutable)} ${systemdQuote(join(paths.currentRelease, "src", "cli.ts"))} serve --config ${systemdQuote(paths.config)}\nRestart=on-failure\nRestartSec=5\nKillMode=process\nTimeoutStopSec=30\nMemoryHigh=1280M\nMemoryMax=1536M\nMemorySwapMax=256M\nCPUQuota=200%\nTasksMax=512\nOOMPolicy=stop\nNoNewPrivileges=true\nPrivateTmp=true\n\n[Install]\nWantedBy=default.target\n`;
 }
 
 function initialConfig(): Record<string, unknown> {
@@ -499,6 +499,7 @@ export async function removeApp(
   await atomicWrite(paths.config, `${JSON.stringify(candidate, null, 2)}\n`, 0o600);
   await atomicWrite(paths.secrets, nextSecrets, 0o600);
   await rm(join(paths.statusDirectory, `${appId}.json`), { force: true });
+  await rm(join(paths.statusDirectory, "queue", `${appId}.json`), { force: true });
   await rm(join(paths.historyDirectory, `${appId}.jsonl`), { force: true });
 
   let containerWarning: string | undefined;

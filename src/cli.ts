@@ -11,6 +11,7 @@ import { addApp, initializeInstallation, installationPaths, uninstallInstallatio
 import { WebhookService } from "./server";
 import { DeploymentStatusStore } from "./status";
 import { DeploymentHistoryStore } from "./history";
+import { DeploymentQueueStore } from "./queue";
 import { updateToLatest, warnIfUpdateAvailable } from "./update";
 
 function requireLinux(): void {
@@ -66,7 +67,9 @@ async function serve(configPath: string, statusDirectory: string): Promise<void>
   const service = new WebhookService(config, {
     statusStore: new DeploymentStatusStore(statusDirectory),
     historyStore: new DeploymentHistoryStore(paths.historyDirectory),
+    queueStore: new DeploymentQueueStore(`${statusDirectory}/queue`),
   });
+  await service.resumeQueued();
   const server = Bun.serve({
     hostname: config.listen.hostname,
     port: config.listen.port,

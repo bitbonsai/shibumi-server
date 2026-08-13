@@ -18,6 +18,8 @@ describe("deployment status", () => {
 
     expect(await store.read("example-com", commit)).toMatchObject({ state: "running", stage: "build", output: "STEP 4/13: RUN bun install" });
     expect(await store.read("example-com", "b".repeat(40))).toBeUndefined();
+    await store.write({ appId: "example-com", commit, state: "running", stage: "build", queuedCommit: "b".repeat(40) });
+    expect(await store.read("example-com", "b".repeat(40))).toMatchObject({ commit, queuedCommit: "b".repeat(40) });
     expect((await stat(join(directory, "example-com.json"))).mode & 0o777).toBe(0o600);
   });
 

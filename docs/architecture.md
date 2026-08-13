@@ -40,7 +40,7 @@ Malformed authentication headers are rejected before the body is read. A signed 
 
 Accepted delivery UUIDs are held in an in-memory, bounded 24-hour replay cache. Repeating a successful or active delivery receives `200` and does not build again. The cache deliberately records only fully verified pushes after the app lock is acquired, so an attacker cannot fill it with unsigned IDs. Failed deployments are removed so an operator can redeliver them; a delivery rejected with `409` is never recorded. Durable replay state across service restarts is later work.
 
-Deployments are locked per application. A different delivery for an app that is already deploying receives `409 Conflict` and is not queued. It must be redelivered after the active deployment finishes.
+Deployments are locked per application. A push received during active work enters a persistent latest-wins queue. A later push replaces the pending commit. The queued commit starts when active work ends, including after a failed deployment.
 
 ## Deterministic checkout
 
@@ -127,4 +127,4 @@ Uninstall requires confirmation, stops and disables the webhook service, then re
 
 Initialization does not clone repositories, edit Caddy, call GitHub, or print secret values. Interactive app registration can clone a public repository and apply reviewed Caddy changes only after explicit confirmation and sudo authorization. GitHub webhook creation remains a client action over `gh`; the server exposes its secret only as JSON through an explicit SSH command. Verified webhook deliveries write bounded, mode-`0600` JSONL history containing time, app ID, delivery ID, commit, result, failed stage, and duration. Payloads, signatures, secrets, and request headers are never retained. `history` reads these records locally or over SSH. `rollback` accepts a unique 7-to-40-character SHA prefix, resolves it to a full commit, requires Git to prove it is an ancestor of the app's configured remote branch, then reuses the complete deployment pipeline. Before startup, deployment records the running container image. A startup or health failure retags that image under the Compose image name, recreates the previous service without building, and verifies its health before reporting the attempted deployment as failed.
 
-Durable replay state, deployment queues, GitHub commit statuses, GHCR, and Node/`npx` compatibility remain later work.
+Durable replay state, GitHub commit statuses, GHCR, and Node/`npx` compatibility remain later work.

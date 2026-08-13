@@ -9,5 +9,6 @@ export * from "./github";
 export * from "./history";
 export * from "./install";
 export * from "./locks";
+export * from "./queue";
 export * from "./server";
 export * from "./status";

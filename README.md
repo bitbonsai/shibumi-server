@@ -2,7 +2,7 @@
 
 Small, secure webhook deployments for a VPS running rootless Podman.
 
-> Experimental: release `0.5.13` is being dogfooded.
+> Experimental: release `0.6.3` is being dogfooded.
 
 Installed commands use short name `shis`. Original `shibumi-server` remains a compatible alias. Interactive output uses Clack's native interface with persimmon branding and plain text when color is unavailable.
 
@@ -56,7 +56,7 @@ Configure one webhook per app:
 - SSL verification: enabled
 - Secret: a unique random value generated with `openssl rand -hex 32`
 
-The receiver rejects malformed event, delivery, and signature headers before reading the body, then verifies `X-Hub-Signature-256`, repository, branch, and full commit SHA. Active and successful `X-GitHub-Delivery` UUIDs are remembered in a bounded 24-hour replay cache; a duplicate is acknowledged without deploying again, while failed deliveries can be retried. If the app is already deploying for a different delivery, it returns `409 Conflict`; deployments are not queued.
+The receiver rejects malformed event, delivery, and signature headers before reading the body, then verifies `X-Hub-Signature-256`, repository, branch, and full commit SHA. Active and successful `X-GitHub-Delivery` UUIDs are remembered in a bounded 24-hour replay cache; a duplicate is acknowledged without deploying again, while failed deliveries can be retried. If an app is already deploying, the same commit attaches to active work. A different commit is saved in a persistent latest-wins queue and starts when active work ends. Later pushes replace the pending commit.
 
 HMAC verification prevents fake requests from authorizing code, but it is not volumetric DDoS protection. Keep the listener on loopback and use Caddy, the host firewall, or an upstream provider to rate-limit the public webhook path. For stricter installations, allowlist GitHub's current `hooks` CIDRs from the [GitHub Meta API](https://api.github.com/meta) and automate updates so the list cannot silently go stale.
 
@@ -81,14 +81,14 @@ Interactive app setup retries transient DNS failures, falls back to the server's
 For scripts and unattended setup, pin the bootstrap release and provide every app value explicitly:
 
 ```bash
-bunx shibumi-server@0.5.13 init
+bunx shibumi-server@0.6.3 init
 shis add example.com \
   --repository github:owner/repository \
   --checkout /srv/shibumi/apps/example-com \
   --port 9100
 ```
 
-`init` stores the release under `~/.local/share/shibumi-server/releases/0.5.13`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
+`init` stores the release under `~/.local/share/shibumi-server/releases/0.6.3`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
 
 List or remove registered apps with branded server-side flows:
 
