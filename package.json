@@ -15,7 +15,8 @@
     "check": "tsc --noEmit",
     "pack:check": "npm pack --dry-run",
     "preview:ui": "bun scripts/preview-ui.ts",
-    "prepublishOnly": "bun test && bun run check"
+    "prepublishOnly": "bun test && bun run check",
+    "postpublish": "bun scripts/sync-website-version.ts"
   },
   "files": [
     "src",
