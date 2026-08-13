@@ -415,7 +415,7 @@ export async function deploy(
   }
   const previous = await runningRelease(app, composeExecutable, compose, options, dependencies);
   try {
-    await runChecked(dependencies, "start", composeExecutable, [...compose, "up", "-d", "--remove-orphans"], options);
+    await runChecked(dependencies, "start", composeExecutable, [...compose, "up", "-d", "--remove-orphans", "--force-recreate"], options);
     await dependencies.onStage?.("health");
     await waitForHealth(app, dependencies);
   } catch (error) {

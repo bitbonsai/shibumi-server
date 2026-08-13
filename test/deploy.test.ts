@@ -74,7 +74,7 @@ describe("deployment pipeline", () => {
       ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "run", "--rm", "web", "bun", "test"],
     ]);
     expect(calls[7]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "ps", "--quiet", "web"]);
-    expect(calls[10]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "up", "-d", "--remove-orphans"]);
+    expect(calls[10]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "up", "-d", "--remove-orphans", "--force-recreate"]);
     expect(calls[11]).toEqual([
       "podman", "container", "list",
       "--filter", "label=io.podman.compose.project=myapp",
