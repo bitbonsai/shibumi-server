@@ -189,6 +189,11 @@ try {
     requireLinux();
     const { runRollback } = await import("./setup");
     await runRollback(homedir(), command.appId, command.commit, command.yes);
+  } else if (command.name === "redeploy") {
+    requireLinux();
+    const { triggerRedeploy } = await import("./redeploy");
+    await triggerRedeploy(homedir(), command.appId, command.commit);
+    console.log(`Redeploy accepted for ${command.commit}.`);
   } else if (command.name === "add") {
     requireLinux();
     const { name: _, ...options } = command;

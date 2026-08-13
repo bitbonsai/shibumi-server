@@ -11,6 +11,7 @@ export type CliCommand =
   | { name: "status"; appId: string; commit?: string; json: boolean }
   | { name: "history"; appId: string; json: boolean }
   | { name: "rollback"; appId: string; commit: string; yes: boolean }
+  | { name: "redeploy"; appId: string; commit: string }
   | { name: "init" }
   | { name: "uninstall"; purge: boolean; yes: boolean }
   | {
@@ -75,6 +76,7 @@ ${heading("OPERATIONS")}
   ${command("shis status <app-id>")} [--commit <sha>] [--json]
   ${command("shis history <app-id>")} [--json]
   ${command("shis rollback <app-id> <sha>")} [--yes]
+  ${command("shis redeploy <app-id> <full-sha>")}
   ${command("shis caddy-cutover <app-id>")}
   ${command("shis client-config <app-id>")} [--server-hostname <host>]
   ${command("shis webhook-secret <app-id>")}
@@ -184,6 +186,13 @@ export function parseCliArgs(argv: string[]): CliCommand {
     if (!/^[a-f0-9]{7,40}$/.test(commit)) fail("rollback commit must be a lowercase SHA with 7 to 40 characters");
     if (flags.some((arg) => arg !== "--yes") || flags.filter((arg) => arg === "--yes").length > 1) fail("rollback accepts only one --yes flag");
     return { name, appId, commit, yes: flags.includes("--yes") };
+  }
+
+  if (name === "redeploy") {
+    const [appId, commit, ...extra] = args;
+    if (!appId || !commit || extra.length > 0) fail("redeploy requires an app id and full commit SHA");
+    if (!/^[a-f0-9]{40}$/.test(commit)) fail("redeploy commit must be a full lowercase SHA");
+    return { name, appId, commit };
   }
 
   if (name === "status") {

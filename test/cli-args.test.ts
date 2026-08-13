@@ -54,6 +54,9 @@ describe("CLI arguments", () => {
     expect(parseCliArgs(["rollback", "example-com", "abcdef0", "--yes"])).toEqual({
       name: "rollback", appId: "example-com", commit: "abcdef0", yes: true,
     });
+    expect(parseCliArgs(["redeploy", "example-com", "a".repeat(40)])).toEqual({
+      name: "redeploy", appId: "example-com", commit: "a".repeat(40),
+    });
   });
 
   test("parses check and serve config paths", () => {
