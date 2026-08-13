@@ -30,7 +30,7 @@ describe("configuration", () => {
     expect(parsed.apps.myapp.minimumFreeDiskMb).toBe(4_096);
     expect(parsed.apps.myapp.buildTimeoutMs).toBe(600_000);
     expect(parsed.apps.myapp.healthAttempts).toBe(20);
-    expect(parsed.apps.myapp.retainedRollbackImages).toBe(2);
+    expect(parsed.apps.myapp.retainedRollbackImages).toBe(1);
     expect(parseConfig(config({ testCommand: undefined })).apps.myapp.testCommand).toBeUndefined();
     expect(parseConfig(config({ composeCommand: ["podman"] })).apps.myapp.composeCommand).toEqual(["podman", "compose"]);
     expect(parseConfig(config({ composeCommand: ["podman-compose"] })).apps.myapp.composeCommand).toEqual(["podman-compose"]);
@@ -48,7 +48,7 @@ describe("configuration", () => {
     expect(() => parseConfig(config({ minimumFreeMemoryMb: 128 }))).toThrow("between 256");
     expect(() => parseConfig(config({ minimumFreeDiskMb: 128 }))).toThrow("between 256");
     expect(() => parseConfig(config({ buildTimeoutMs: 999 }))).toThrow("between 1000");
-    expect(() => parseConfig(config({ retainedRollbackImages: 11 }))).toThrow("between 0 and 10");
+    expect(() => parseConfig(config({ retainedRollbackImages: 2 }))).toThrow("between 0 and 1");
   });
 
   test("requires the health URL to use the assigned app port", () => {

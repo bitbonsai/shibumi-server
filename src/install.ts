@@ -303,7 +303,19 @@ export async function initializeInstallation(
   if (!await exists(paths.config)) {
     await atomicWrite(paths.config, `${JSON.stringify(initialConfig(), null, 2)}\n`, 0o600);
   } else {
-    await chmod(paths.config, 0o600);
+    const config = await rawConfig(paths.config);
+    const apps = config.apps;
+    let migrated = false;
+    if (apps && typeof apps === "object" && !Array.isArray(apps)) {
+      for (const app of Object.values(apps)) {
+        if (app && typeof app === "object" && !Array.isArray(app) && Number((app as Record<string, unknown>).retainedRollbackImages) > 1) {
+          (app as Record<string, unknown>).retainedRollbackImages = 1;
+          migrated = true;
+        }
+      }
+    }
+    if (migrated) await atomicWrite(paths.config, `${JSON.stringify(config, null, 2)}\n`, 0o600);
+    else await chmod(paths.config, 0o600);
   }
   if (!await exists(paths.secrets)) await atomicWrite(paths.secrets, "", 0o600);
   else await chmod(paths.secrets, 0o600);
@@ -404,7 +416,7 @@ export async function addApp(
         buildTimeoutMs: 600_000,
         healthAttempts: 20,
         healthIntervalMs: 500,
-        retainedRollbackImages: 2,
+        retainedRollbackImages: 1,
         caddyMode: options.caddyMode,
       },
     },

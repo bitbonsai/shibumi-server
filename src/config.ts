@@ -180,10 +180,10 @@ export function parseConfig(value: unknown): ServerConfig {
       healthAttempts: integer(appValue.healthAttempts ?? 20, `apps.${appId}.healthAttempts`, 1, 120),
       healthIntervalMs: integer(appValue.healthIntervalMs ?? 500, `apps.${appId}.healthIntervalMs`, 10, 60_000),
       retainedRollbackImages: integer(
-        appValue.retainedRollbackImages ?? 2,
+        appValue.retainedRollbackImages ?? 1,
         `apps.${appId}.retainedRollbackImages`,
         0,
-        10,
+        1,
       ),
       caddyMode: appValue.caddyMode === undefined
         ? undefined

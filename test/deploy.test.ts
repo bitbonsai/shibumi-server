@@ -20,7 +20,7 @@ const app: AppConfig = {
   buildTimeoutMs: 600_000,
   healthAttempts: 2,
   healthIntervalMs: 10,
-  retainedRollbackImages: 2,
+  retainedRollbackImages: 1,
 };
 
 class FakeRunner implements CommandRunner {
@@ -127,7 +127,7 @@ describe("deployment pipeline", () => {
     expect(runner.calls.at(-1)?.args).toEqual(["image", "prune", "--force"]);
   });
 
-  test("keeps the active image and two rollback images", async () => {
+  test("keeps two successful images total", async () => {
     class RetentionRunner extends FakeRunner {
       override async run(command: string, args: string[], options?: CommandOptions): Promise<CommandResult> {
         if (command === "podman" && args[0] === "image" && args[1] === "list") {
@@ -159,6 +159,7 @@ describe("deployment pipeline", () => {
       .filter(({ command, args }) => command === "podman" && args[0] === "image" && args[1] === "rm")
       .map(({ args }) => args[2]);
     expect(removed).toEqual([
+      "localhost/shibumi-server/myapp:release-1700000003000-cccccccccccc",
       "localhost/shibumi-server/myapp:release-1700000002000-dddddddddddd",
       "localhost/shibumi-server/myapp:release-1700000001000-eeeeeeeeeeee",
     ]);

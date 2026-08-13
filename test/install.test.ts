@@ -111,6 +111,18 @@ describe("pinned installation", () => {
     expect(services.restarts).toBe(0);
   });
 
+  test("caps existing app retention at two successful images during update", async () => {
+    const home = await temporaryHome();
+    const { result, services } = await initialized(home);
+    const config = JSON.parse(await readFile(result.paths.config, "utf8"));
+    config.apps.example = { retainedRollbackImages: 2 };
+    await writeFile(result.paths.config, `${JSON.stringify(config)}\n`);
+
+    await initialized(home, services);
+
+    expect(JSON.parse(await readFile(result.paths.config, "utf8")).apps.example.retainedRollbackImages).toBe(1);
+  });
+
   test("does not overwrite machine config or secrets when init is rerun", async () => {
     const home = await temporaryHome();
     const { result, services } = await initialized(home);
@@ -178,7 +190,7 @@ describe("app registration", () => {
     expect(result.config.apps["example-com"].composeCommand).toEqual(["podman-compose"]);
     expect(result.config.apps["example-com"].healthUrl).toBe("http://127.0.0.1:9100/healthz");
     expect(result.config.apps["example-com"].minimumFreeMemoryMb).toBe(2_048);
-    expect(result.config.apps["example-com"].retainedRollbackImages).toBe(2);
+    expect(result.config.apps["example-com"].retainedRollbackImages).toBe(1);
 
     const config = JSON.parse(await readFile(paths.config, "utf8"));
     expect(config.apps["example-com"].repository).toBe("owner/repository");
