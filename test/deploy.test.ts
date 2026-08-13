@@ -294,6 +294,32 @@ describe("deployment pipeline", () => {
     expect(result.exitCode).not.toBe(0);
   });
 
+  test("finds the previous standalone podman-compose image by labels before restoring it", async () => {
+    class StandaloneRunner extends FakeRunner {
+      override async run(command: string, args: string[], options?: CommandOptions): Promise<CommandResult> {
+        if (command === "podman-compose" && args.includes("ps")) {
+          this.calls.push({ command, args, options });
+          return { exitCode: 2, stdout: "", stderr: "unrecognized arguments: web" };
+        }
+        return super.run(command, args, options);
+      }
+    }
+    const runner = new StandaloneRunner();
+    runner.responses = [
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${commit}\n`, stderr: "" },
+    ];
+    let healthChecks = 0;
+    const health: Fetcher = async () => new Response("health", { status: ++healthChecks <= app.healthAttempts ? 503 : 200 });
+
+    await expect(deploy("myapp", { ...app, composeCommand: ["podman-compose"] }, commit, dependencies(runner, health))).rejects.toThrow("health check did not pass");
+
+    expect(runner.calls.some(({ command, args }) => command === "podman" && args[0] === "container" && args[1] === "list")).toBe(true);
+    expect(runner.calls.some(({ command, args }) => command === "podman" && args[0] === "image" && args[1] === "tag" && args[2] === "sha256:image-id")).toBe(true);
+    expect(runner.calls.some(({ args }) => args.includes("--no-build") && args.includes("--force-recreate"))).toBe(true);
+  });
+
   test("restores the previous image when the new release fails health checks", async () => {
     const runner = new FakeRunner();
     runner.responses = [

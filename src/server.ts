@@ -178,16 +178,21 @@ export class WebhookService {
     const startedAt = Date.now();
     await this.#writeStatus(appId, push.commit, "accepted", "accepted");
     await this.#writeHistory({ appId, commit: push.commit, kind: "webhook", state: "accepted", delivery: deliveryId });
+    let latestOutput: string | undefined;
     const dependencies: DeployDependencies = {
       ...this.#deployDependencies,
       onStage: async (stage) => {
+        latestOutput = undefined;
         await this.#deployDependencies.onStage?.(stage);
         await this.#writeStatus(appId, push.commit, "running", stage);
       },
       onOutput: async (stage, line) => {
         await this.#deployDependencies.onOutput?.(stage, line);
         const output = line.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 512);
-        if (output) await this.#writeStatus(appId, push.commit, "running", stage, undefined, output);
+        if (output) {
+          latestOutput = output;
+          await this.#writeStatus(appId, push.commit, "running", stage, undefined, output);
+        }
       },
     };
     const task = deploy(appId, app, push.commit, dependencies)
@@ -205,7 +210,8 @@ export class WebhookService {
           push.commit,
           "failed",
           stage,
-          error instanceof DeploymentError ? `${error.stage} failed` : "deployment failed",
+          (error instanceof Error ? error.message : "deployment failed").replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 512),
+          latestOutput,
         );
         await this.#writeHistory({
           appId, commit: push.commit, kind: "webhook", state: "failed", delivery: deliveryId, stage, durationMs: Date.now() - startedAt,

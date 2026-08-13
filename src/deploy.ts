@@ -315,7 +315,16 @@ async function runningRelease(
     [...compose, "ps", "--quiet", app.service],
     { ...options, capture: true },
   );
-  const containerId = container.exitCode === 0 ? container.stdout.trim().split(/\s+/)[0] : undefined;
+  let containerId = container.exitCode === 0 ? container.stdout.trim().split(/\s+/)[0] : undefined;
+  if (!containerId) {
+    const labeled = await dependencies.runner.run("podman", [
+      "container", "list",
+      "--filter", `label=io.podman.compose.project=${app.composeProject}`,
+      "--filter", `label=io.podman.compose.service=${app.service}`,
+      "--format", "{{.ID}}",
+    ], { capture: true });
+    containerId = labeled.exitCode === 0 ? labeled.stdout.trim().split(/\s+/)[0] : undefined;
+  }
   if (!containerId) return undefined;
   const [imageId, imageName] = await Promise.all([
     dependencies.runner.run("podman", ["container", "inspect", "--format", "{{.Image}}", containerId], { capture: true }),
