@@ -67,13 +67,13 @@ export interface RemoveAppResult {
 }
 
 export interface CheckoutManager {
-  prepare(options: Pick<AddAppOptions, "repository" | "ref" | "checkout" | "composeFile">): Promise<void>;
+  prepare(options: Pick<AddAppOptions, "repository" | "ref" | "checkout" | "composeFile">): Promise<string>;
 }
 
 export class GitCheckoutManager implements CheckoutManager {
   constructor(private readonly runner: CommandRunner = new BunCommandRunner()) {}
 
-  async prepare(options: Pick<AddAppOptions, "repository" | "ref" | "checkout" | "composeFile">): Promise<void> {
+  async prepare(options: Pick<AddAppOptions, "repository" | "ref" | "checkout" | "composeFile">): Promise<string> {
     const existingCheckout = await exists(options.checkout);
     if (!existingCheckout) {
       await mkdir(dirname(options.checkout), { recursive: true, mode: 0o700 });
@@ -119,12 +119,12 @@ export class GitCheckoutManager implements CheckoutManager {
     }
 
     const composeFile = options.composeFile ?? "compose.yaml";
-    if (!await exists(resolve(options.checkout, composeFile))) {
-      const tracked = await this.runner.run("git", ["-C", options.checkout, "ls-files"], { capture: true });
-      const candidates = tracked.stdout.split(/\r?\n/).filter((file) => /(^|\/)(?:compose\.ya?ml|docker-compose\.ya?ml)$/.test(file));
-      const found = candidates.length === 1 ? `\n\nFound ${candidates[0]}. Rerun add with --compose-file ${candidates[0]}.` : "";
-      throw new Error(`repository is missing ${composeFile}.${found}\n\nNext: from the local project root, run:\ncurl -fsSL https://shibumistack.dev/install/ship.sh | sh\n\nThe installer adds ship scripts and uses one detected Compose file without overwriting owned files.`);
-    }
+    if (await exists(resolve(options.checkout, composeFile))) return composeFile;
+    const tracked = await this.runner.run("git", ["-C", options.checkout, "ls-files"], { capture: true });
+    const candidates = tracked.stdout.split(/\r?\n/).filter((file) => /(^|\/)(?:compose\.ya?ml|docker-compose\.ya?ml)$/.test(file));
+    if (options.composeFile === undefined && candidates.length === 1) return candidates[0];
+    const found = candidates.length === 1 ? `\n\nFound ${candidates[0]}. Rerun add with --compose-file ${candidates[0]}.` : "";
+    throw new Error(`repository is missing ${composeFile}.${found}\n\nNext: from the local project root, run:\ncurl -fsSL https://shibumistack.dev/install/ship.sh | sh\n\nThe installer adds ship scripts and uses one detected Compose file without overwriting owned files.`);
   }
 }
 
@@ -381,7 +381,8 @@ export async function addApp(
   const apps = root.apps;
   if (!apps || typeof apps !== "object" || Array.isArray(apps)) throw new Error("config.apps must be an object");
 
-  const candidate = {
+  let composeFile = options.composeFile ?? "compose.yaml";
+  const candidateWithCompose = (file: string) => ({
     ...root,
     apps: {
       ...(apps as Record<string, unknown>),
@@ -390,7 +391,7 @@ export async function addApp(
         repository: options.repository,
         ref: options.ref ?? "refs/heads/main",
         checkout: options.checkout,
-        composeFile: options.composeFile ?? "compose.yaml",
+        composeFile: file,
         composeCommand: options.composeCommand ?? ["podman", "compose"],
         composeProject: appId,
         service: options.service ?? "web",
@@ -407,8 +408,9 @@ export async function addApp(
         caddyMode: options.caddyMode,
       },
     },
-  };
-  const parsed = parseConfig(candidate);
+  });
+  let candidate = candidateWithCompose(composeFile);
+  let parsed = parseConfig(candidate);
   const existing = (apps as Record<string, unknown>)[appId];
   if (existing !== undefined) {
     const existingConfig = parseConfig(root).apps[appId];
@@ -417,7 +419,9 @@ export async function addApp(
   if (options.dryRun) return { appId, secretEnvironmentVariable, config: parsed };
 
   if (existing === undefined) {
-    await checkouts.prepare(options);
+    composeFile = await checkouts.prepare(options);
+    candidate = candidateWithCompose(composeFile);
+    parsed = parseConfig(candidate);
     const secrets = await readFile(paths.secrets, "utf8");
     const existingSecret = new RegExp(`^${secretEnvironmentVariable}=([^\\r\\n]*)$`, "m").exec(secrets)?.[1];
     if (existingSecret !== undefined && !/^[a-f0-9]{64}$/.test(existingSecret)) {

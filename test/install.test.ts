@@ -19,7 +19,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-const checkouts: CheckoutManager = { async prepare() {} };
+const checkouts: CheckoutManager = { async prepare(options) { return options.composeFile ?? "compose.yaml"; } };
 
 class FakeServices implements ServiceManager {
   reloads = 0;
@@ -190,6 +190,18 @@ describe("app registration", () => {
     expect(services.restarts).toBe(1);
   });
 
+  test("persists a discovered nested Compose config", async () => {
+    const home = await temporaryHome();
+    const { services } = await initialized(home);
+    const nested: CheckoutManager = { async prepare() { return "website/compose.yaml"; } };
+
+    const result = await addApp(appOptions(home), services, nested);
+
+    expect(result.config.apps["example-com"].composeFile).toBe("website/compose.yaml");
+    const config = JSON.parse(await readFile(installationPaths(home).config, "utf8"));
+    expect(config.apps["example-com"].composeFile).toBe("website/compose.yaml");
+  });
+
   test("previews the complete app without changing config, secrets, or systemd", async () => {
     const home = await temporaryHome();
     const { services } = await initialized(home);
@@ -331,11 +343,11 @@ describe("Git checkout preparation", () => {
       { exitCode: 0, stdout: `${"a".repeat(40)}\n`, stderr: "" },
     ];
 
-    await new GitCheckoutManager(runner).prepare({
+    expect(await new GitCheckoutManager(runner).prepare({
       repository: "owner/repository",
       checkout,
       composeFile: "compose.yaml",
-    });
+    })).toBe("compose.yaml");
 
     expect(runner.calls).toEqual([
       ["git", "-C", checkout, "remote", "get-url", "origin"],
@@ -348,7 +360,30 @@ describe("Git checkout preparation", () => {
     ]);
   });
 
-  test("gives a source-owned next step when Compose config is absent", async () => {
+  test("selects one tracked nested Compose config when none was specified", async () => {
+    const root = await temporaryHome();
+    const checkout = join(root, "app");
+    await mkdir(checkout, { recursive: true });
+    const sha = "a".repeat(40);
+    const runner = new FakeRunner();
+    runner.results = [
+      { exitCode: 0, stdout: "https://github.com/owner/repository.git\n", stderr: "" },
+      { exitCode: 0, stdout: `${sha}\trefs/heads/main\n`, stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${sha}\n`, stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${sha}\n`, stderr: "" },
+      { exitCode: 0, stdout: "website/compose.yaml\n", stderr: "" },
+    ];
+
+    expect(await new GitCheckoutManager(runner).prepare({
+      repository: "owner/repository",
+      checkout,
+    })).toBe("website/compose.yaml");
+  });
+
+  test("gives a source-owned next step when an explicit Compose config is absent", async () => {
     const root = await temporaryHome();
     const checkout = join(root, "app");
     await mkdir(checkout, { recursive: true });

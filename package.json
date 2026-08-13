@@ -1,6 +1,6 @@
 {
   "name": "shibumi-server",
-  "version": "0.3.2",
+  "version": "0.3.4",
   "description": "Small, secure webhook deploy service for rootless Podman.",
   "license": "MIT",
   "type": "module",
