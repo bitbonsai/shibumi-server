@@ -13,6 +13,7 @@ import { DeploymentStatusStore } from "./status";
 import { DeploymentHistoryStore } from "./history";
 import { DeploymentQueueStore } from "./queue";
 import { updateToLatest, warnIfUpdateAvailable } from "./update";
+import { SHIP_INSTALL_COMMAND } from "./terminal-ui";
 
 function requireLinux(): void {
   if (process.platform !== "linux") throw new Error("this command requires Linux with a systemd user session");
@@ -131,7 +132,7 @@ try {
       { tone: "success", message: `Installed shibumi-server ${result.version}` },
       { tone: "info", message: `Release ${result.paths.currentRelease}` },
       { tone: "info", message: `Launcher ${result.paths.shortLauncher}` },
-    ], "Next: shis add example.com");
+    ], `Next: from your local project root, run:\n${SHIP_INSTALL_COMMAND}`);
   } else if (command.name === "uninstall") {
     requireLinux();
     if (!command.yes) {

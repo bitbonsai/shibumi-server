@@ -1,7 +1,7 @@
 export const BRAND = "渋み  shis (shibumi-server)";
+export const SHIP_INSTALL_COMMAND = "curl -fsSL https://shibumistack.dev/install/ship.sh | sh";
 
 const ORANGE = "\u001b[38;2;255;102;0m";
-const BLUE = "\u001b[34m";
 const CYAN = "\u001b[36m";
 const RESET = "\u001b[0m";
 
@@ -19,10 +19,6 @@ export function brand(color = supportsTerminalColor()): string {
 
 export function next(value: string, color = supportsTerminalColor()): string {
   return color ? `${ORANGE}Next:${RESET} ${value}` : `Next: ${value}`;
-}
-
-export function link(value: string, color = supportsTerminalColor()): string {
-  return color ? `${BLUE}${value}${RESET}` : value;
 }
 
 export function command(value: string, color = supportsTerminalColor()): string {

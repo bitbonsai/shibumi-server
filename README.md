@@ -62,21 +62,31 @@ HMAC verification prevents fake requests from authorizing code, but it is not vo
 
 ## Installation
 
-The first release targets Linux with Bun, Git, rootless Podman, a usable Compose frontend (`podman compose` or `podman-compose`), Caddy, and a systemd user session. Log in to the VPS or homelab server as the deployment user and run:
+The first release targets Linux with Bun, Git, rootless Podman, a usable Compose frontend (`podman compose` or `podman-compose`), Caddy, and a systemd user session.
+
+Recommended onboarding starts from your local project root:
+
+```bash
+curl -fsSL https://shibumistack.dev/install/ship.sh | sh
+```
+
+Owned ship setup connects through confirmed SSH, installs or upgrades `shibumi-server` when needed, registers the app, and configures GitHub. If DNS or webhook delivery is pending, setup files remain in the project and setup resumes with `bun run ship:setup`.
+
+Server operators can prepare the host directly by logging in as the deployment user and running:
 
 ```bash
 curl -fsSL https://shibumistack.dev/install/server | bash
 ```
 
-The Bash bootstrap installs Bun when needed, then runs interactive setup. Setup checks Git, Caddy, rootless Podman, a working Compose frontend, and the systemd user session before changing server configuration. It copies the resolved release locally, installs its lockfile-pinned production dependencies without lifecycle scripts, creates mode-restricted config and secret files, writes a resource-limited systemd user service, and installs `shibumi-server` in `~/.local/bin`. The service stays pinned to that local release until you run an explicit upgrade. Make sure `~/.local/bin` is on `PATH`.
+The server bootstrap installs Bun when needed, then runs interactive setup. Setup checks Git, Caddy, rootless Podman, a working Compose frontend, and the systemd user session before changing server configuration. It copies the resolved release locally, installs its lockfile-pinned production dependencies without lifecycle scripts, creates mode-restricted config and secret files, writes a resource-limited systemd user service, and installs `shibumi-server` in `~/.local/bin`. The service stays pinned to that local release until you run an explicit upgrade. Make sure `~/.local/bin` is on `PATH`.
 
-Add the first app, or another one later, with the installed command:
+For manual server operation or automation, add an app with the installed command:
 
 ```bash
 shis add example.com
 ```
 
-Interactive app setup retries transient DNS failures, falls back to the server's system resolver, distinguishes unavailable lookups from confirmed missing records, detects an existing Caddy site, accepts `github:owner/repo`, a GitHub repository URL, or a `/tree/<branch>` URL, suggests a user-owned checkout under `~/shibumi`, then assigns the first available loopback port from `9100`. Recommended Caddy settings enable Zstd with gzip fallback, indexing, safe baseline headers, and bounded JSON logs; Custom exposes each setting. Existing sites preserve their current block by default, with explicit rewrite available. Add `--dry-run` to follow the same detection, prompts, port selection, and validation without writing config or secrets, invoking sudo, or changing Caddy or systemd. A real add clones a missing checkout or safely fast-forwards a clean existing checkout to its configured origin branch, generates a unique 32-byte webhook secret, enables the user service, and asks sudo only when its constrained helper validates and reloads Caddy. GitHub remains unchanged until the client ship script configures its webhook. Rerunning the same domain command validates stored settings, preserves the checkout and webhook secret, skips Caddy mutation, and restarts the user service.
+Interactive app setup retries transient DNS failures, falls back to the server's system resolver, distinguishes unavailable lookups from confirmed missing records, detects an existing Caddy site, accepts `github:owner/repo`, a GitHub repository URL, or a `/tree/<branch>` URL, suggests a user-owned checkout under `~/shibumi`, then assigns the first available loopback port from `9100`. Successful manual registration prints the exact local ship installer command. Recommended Caddy settings enable Zstd with gzip fallback, indexing, safe baseline headers, and bounded JSON logs; Custom exposes each setting. Existing sites preserve their current block by default, with explicit rewrite available. Add `--dry-run` to follow the same detection, prompts, port selection, and validation without writing config or secrets, invoking sudo, or changing Caddy or systemd. A real add clones a missing checkout or safely fast-forwards a clean existing checkout to its configured origin branch, generates a unique 32-byte webhook secret, enables the user service, and asks sudo only when its constrained helper validates and reloads Caddy. GitHub remains unchanged until the client ship script configures its webhook. Rerunning the same domain command validates stored settings, preserves the checkout and webhook secret, skips Caddy mutation, and restarts the user service.
 
 For scripts and unattended setup, pin the bootstrap release and provide every app value explicitly:
 

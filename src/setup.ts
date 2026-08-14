@@ -13,7 +13,7 @@ import { detectCaddySite, type CaddySiteOptions, type Compression, type HeaderPr
 import { applyCaddyWithSudo, authorizeCaddySudo, type CaddyApplyRequest } from "./caddy-sudo";
 import { addApp, appIdForDomain, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, type AddAppOptions } from "./install";
 import { parseGitHubRepositoryTarget } from "./repository";
-import { brand, command, link, next } from "./terminal-ui";
+import { brand, command, next, SHIP_INSTALL_COMMAND } from "./terminal-ui";
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -32,7 +32,7 @@ export function registrationOutcome(
 ): string {
   return fromShipSetup
     ? "Registration is current."
-    : `${next(link("https://shibumistack.dev/ship", color), color)}\n   Run ${command("bun run ship:setup", color)} from your local project root.`;
+    : `${next("from your local project root, run:", color)}\n   ${command(SHIP_INSTALL_COMMAND, color)}`;
 }
 
 export function formatReadySummary(options: {
@@ -434,8 +434,9 @@ export async function runInteractiveSetup(options: {
 
   outro([
     `Launcher: ${installation.paths.shortLauncher}`,
-    "Next: shis add example.com",
     "The service starts after its first app is added.",
+    "From your local project root:",
+    SHIP_INSTALL_COMMAND,
   ].join("\n"));
 }
 
@@ -443,7 +444,7 @@ export async function runListApps(home: string): Promise<void> {
   intro(brand());
   const apps = await registeredApps(home);
   if (apps.length === 0) {
-    outro("No apps registered. Add one with: shis add <domain>");
+    outro(`No apps registered. From your local project root, run:\n${SHIP_INSTALL_COMMAND}`);
     return;
   }
   for (const app of apps) {

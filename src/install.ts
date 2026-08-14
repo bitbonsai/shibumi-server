@@ -3,6 +3,7 @@ import { chmod, cp, lstat, mkdir, readFile, rename, rm, symlink, writeFile } fro
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseConfig, type AppConfig, type ServerConfig } from "./config";
 import { BunCommandRunner, type CommandRunner } from "./deploy";
+import { SHIP_INSTALL_COMMAND } from "./terminal-ui";
 
 const PACKAGE_FILES = ["src", "docs", "examples", "README.md", "LICENSE", "package.json", "runtime-lock.json"];
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -124,7 +125,7 @@ export class GitCheckoutManager implements CheckoutManager {
     const candidates = tracked.stdout.split(/\r?\n/).filter((file) => /(^|\/)(?:compose\.ya?ml|docker-compose\.ya?ml)$/.test(file));
     if (options.composeFile === undefined && candidates.length === 1) return candidates[0];
     const found = candidates.length === 1 ? `\n\nFound ${candidates[0]}. Rerun add with --compose-file ${candidates[0]}.` : "";
-    throw new Error(`repository is missing ${composeFile}.${found}\n\nNext: from the local project root, run:\ncurl -fsSL https://shibumistack.dev/install/ship.sh | sh\n\nThe installer adds ship scripts and uses one detected Compose file without overwriting owned files.`);
+    throw new Error(`repository is missing ${composeFile}.${found}\n\nNext: from the local project root, run:\n${SHIP_INSTALL_COMMAND}\n\nThe installer adds ship scripts and uses one detected Compose file without overwriting owned files.`);
   }
 }
 
