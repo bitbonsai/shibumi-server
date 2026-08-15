@@ -5,8 +5,9 @@ import { homedir } from "node:os";
 import { createServer } from "node:net";
 import { isAbsolute, join, resolve } from "node:path";
 import { loadConfig } from "./config";
-import { BunCommandRunner, deploy, DeploymentError, defaultDeployDependencies, type CommandRunner } from "./deploy";
+import { BunCommandRunner, DeploymentError, defaultDeployDependencies, deploy, rollbackToPreviousImage, type CommandRunner } from "./deploy";
 import { DeploymentHistoryStore } from "./history";
+import { DeploymentLogStore } from "./deployment-log";
 import { DeploymentStatusStore } from "./status";
 import { checkDomainDns, detectPublicAddresses } from "./domain";
 import { detectCaddySite, type CaddySiteOptions, type Compression, type HeaderProfile, type Indexing } from "./caddy";
@@ -147,7 +148,7 @@ function portAvailable(port: number): Promise<boolean> {
 export async function nextAvailablePort(
   used: ReadonlySet<number>,
   available: (port: number) => Promise<boolean> = portAvailable,
-  first = 9_100,
+  first = 9_001,
 ): Promise<number> {
   for (let port = first; port <= 65_535; port += 1) {
     if (!used.has(port) && await available(port)) return port;
@@ -247,9 +248,9 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}, home = h
   const portAnswer = initial.hostPort === undefined
     ? await text({
         message: "Which local port should Caddy use?",
-        placeholder: "9100",
+        placeholder: "9001",
         validate: (value) => {
-          const parsed = Number(value || "9100");
+          const parsed = Number(value || "9001");
           return Number.isInteger(parsed) && parsed >= 1024 && parsed <= 65_535
             ? undefined
             : "Use an integer between 1024 and 65535";
@@ -257,7 +258,7 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}, home = h
       })
     : String(initial.hostPort);
   if (cancelled(portAnswer)) return stopSetup();
-  const port = portAnswer || "9100";
+  const port = portAnswer || "9001";
 
   return {
     ...initial,
@@ -283,9 +284,9 @@ export async function confirmUninstall(purge: boolean): Promise<boolean> {
   return true;
 }
 
-async function promptForCaddy(answers: SetupAnswers): Promise<CaddyApplyRequest | undefined> {
+async function promptForCaddy(answers: SetupAnswers, yes = false): Promise<CaddyApplyRequest | undefined> {
   const detected = await detectCaddySite(answers.domain);
-  const choice = await select({
+  const choice = yes ? (detected.exists ? "preserve" : "new") : await select({
     message: detected.exists ? `Existing Caddy site detected (${detected.upstreams.join(", ") || "custom upstream"})` : "Domain configuration",
     options: detected.exists ? [
       { value: "preserve", label: "Keep current config", hint: "recommended; add Shibumi webhook route only" },
@@ -390,7 +391,7 @@ async function promptForCaddy(answers: SetupAnswers): Promise<CaddyApplyRequest 
   };
   const mode = choice === "custom" ? (detected.exists ? "rewrite" : "new") : choice;
   const request = { version: 1, action: "apply", mode: mode as CaddyApplyRequest["mode"], site } as const;
-  if (answers.dryRun) return request;
+  if (answers.dryRun || yes) return request;
   const accepted = await confirm({
     message: `Add ${answers.domain} and apply ${mode} Caddy config? sudo will ask before Caddy changes.`,
     initialValue: true,
@@ -511,14 +512,14 @@ export async function runRemoveApp(home: string, selector: string, yes = false):
     : `${result.remainingApps} app${result.remainingApps === 1 ? "" : "s"} remain. shibumi-server restarted.`);
 }
 
-export async function runRollback(home: string, appId: string, commit: string, yes = false): Promise<void> {
+export async function runRollback(home: string, appId: string, yes = false): Promise<void> {
   const paths = installationPaths(home);
   const config = await loadConfig(paths.config);
   const app = config.apps[appId];
   if (!app) throw new Error(`unknown app: ${appId}.\n\nNext: run shis list and choose an app ID.`);
   intro(brand());
   if (!yes) {
-    const accepted = await confirm({ message: `Rebuild and deploy ${app.domain ?? appId} at ${commit.slice(0, 12)}?` });
+    const accepted = await confirm({ message: `Restore the previous retained image for ${app.domain ?? appId}?` });
     if (isCancel(accepted) || !accepted) {
       cancel("Rollback cancelled.");
       return;
@@ -529,30 +530,47 @@ export async function runRollback(home: string, appId: string, commit: string, y
   if (stopped.exitCode !== 0) throw new Error(`${stopped.stderr.trim() || "cannot stop shibumi-server"}\n\nNext: inspect systemctl --user status shibumi-server, then retry rollback.`);
   const startedAt = Date.now();
   const history = new DeploymentHistoryStore(paths.historyDirectory);
+  const logs = new DeploymentLogStore(paths.logsDirectory);
   const status = new DeploymentStatusStore(paths.statusDirectory);
-  try {
-    const fetched = await runner.run("git", ["-C", app.checkout, "fetch", "--prune", "origin", app.ref], { capture: true, timeoutMs: 120_000 });
-    if (fetched.exitCode !== 0) throw new Error(`${fetched.stderr.trim() || "cannot fetch configured branch"}\n\nNext: verify Git access and retry rollback.`);
-    const resolved = await runner.run("git", ["-C", app.checkout, "rev-parse", "--verify", `${commit}^{commit}`], { capture: true });
-    const fullCommit = resolved.stdout.trim().toLowerCase();
-    if (resolved.exitCode !== 0 || !/^[a-f0-9]{40}$/.test(fullCommit)) {
-      throw new Error(`commit ${commit} is unknown or ambiguous.\n\nNext: use a unique SHA from the configured branch.`);
+  const appendLog = async (stage: string, value: string) => {
+    try {
+      await logs.append(appId, stage, value);
+    } catch (error) {
+      log.error(`deployment log could not be written: ${error instanceof Error ? error.message : String(error)}`);
     }
-    await history.append({ appId, commit: fullCommit, kind: "rollback", state: "accepted" });
-    await status.write({ appId, commit: fullCommit, state: "accepted", stage: "accepted", url: app.domain ? `https://${app.domain}` : undefined });
+  };
+  let targetCommit: string | undefined;
+  try {
     const dependencies = defaultDeployDependencies();
     dependencies.onStage = async (stage) => {
-      await status.write({ appId, commit: fullCommit, state: "running", stage, url: app.domain ? `https://${app.domain}` : undefined });
+      if (targetCommit) {
+        await appendLog(stage, "Started");
+        await status.write({ appId, commit: targetCommit, state: "running", stage, url: app.domain ? `https://${app.domain}` : undefined });
+      }
     };
     try {
-      await deploy(appId, app, fullCommit, dependencies, { allowAncestor: true });
+      const fullCommit = await rollbackToPreviousImage(appId, app, dependencies, async (commit) => {
+        targetCommit = commit;
+        try {
+          await logs.start(appId, commit);
+        } catch (error) {
+          log.error(`deployment log could not be started: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        await appendLog("accepted", "Rollback accepted");
+        await history.append({ appId, commit, kind: "rollback", state: "accepted" });
+        await status.write({ appId, commit, state: "accepted", stage: "accepted", url: app.domain ? `https://${app.domain}` : undefined });
+      });
       await status.write({ appId, commit: fullCommit, state: "succeeded", stage: "shipped", url: app.domain ? `https://${app.domain}` : undefined });
+      await appendLog("shipped", `Rollback succeeded in ${Date.now() - startedAt}ms`);
       await history.append({ appId, commit: fullCommit, kind: "rollback", state: "succeeded", durationMs: Date.now() - startedAt });
-      outro(`${app.domain ?? appId} rolled back to ${fullCommit.slice(0, 12)}`);
+      outro(`${app.domain ?? appId} restored to ${fullCommit.slice(0, 12)}`);
     } catch (error) {
       const stage = error instanceof DeploymentError ? error.stage : "unknown";
-      await status.write({ appId, commit: fullCommit, state: "failed", stage, message: `${stage} failed`, url: app.domain ? `https://${app.domain}` : undefined });
-      await history.append({ appId, commit: fullCommit, kind: "rollback", state: "failed", stage, durationMs: Date.now() - startedAt });
+      if (targetCommit) {
+        await appendLog(stage, error instanceof Error ? error.message : String(error));
+        await status.write({ appId, commit: targetCommit, state: "failed", stage, message: `${stage} failed`, url: app.domain ? `https://${app.domain}` : undefined });
+        await history.append({ appId, commit: targetCommit, kind: "rollback", state: "failed", stage, durationMs: Date.now() - startedAt });
+      }
       throw new Error(`${error instanceof Error ? error.message : String(error)}\n\nNext: inspect shis history ${appId} and systemctl --user status shibumi-server.`);
     }
   } finally {
@@ -593,9 +611,9 @@ export async function runCaddyCutover(home: string, appId: string): Promise<void
   outro(`Caddy now routes ${app.domain} to 127.0.0.1:${app.hostPort}.`);
 }
 
-export async function runInteractiveAdd(options: { home: string } & Partial<SetupAnswers>): Promise<void> {
+export async function runInteractiveAdd(options: { home: string; yes?: boolean } & Partial<SetupAnswers>): Promise<void> {
   intro(brand());
-  const { home, ...provided } = options;
+  const { home, yes = false, ...provided } = options;
   let existing: Partial<SetupAnswers> = {};
   let existingCaddyMode: AddAppOptions["caddyMode"];
   if (provided.domain) {
@@ -650,7 +668,7 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
       return;
     }
     progress.stop(dns.state === "ready" ? "DNS points to this server" : `DNS detected (${dns.state})`);
-    if (dns.state === "elsewhere") {
+    if (dns.state === "elsewhere" && !yes) {
       const migrate = await confirm({
         message: `${initial.domain} resolves elsewhere. Prepare a staged migration to this server?`,
         initialValue: false,
@@ -659,7 +677,12 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
     }
   }
   const hostPort = initial.hostPort ?? await automaticPort(home, initial.domain);
-  const answers = await promptForApp({ ...initial, hostPort }, home);
+  if (yes && (!initial.domain || !initial.repository)) throw new Error("add --yes requires domain and --repository");
+  const answers = await promptForApp({
+    ...initial,
+    hostPort,
+    checkout: initial.checkout ?? (yes && initial.domain ? defaultCheckout(initial.domain, home) : undefined),
+  }, home);
   if (!answers) return;
   if (!answers.healthPath) {
     try {
@@ -671,7 +694,7 @@ export async function runInteractiveAdd(options: { home: string } & Partial<Setu
       log.info("Health path /healthz (default)");
     }
   }
-  const caddy = existingCaddyMode ? undefined : await promptForCaddy(answers);
+  const caddy = existingCaddyMode ? undefined : await promptForCaddy(answers, yes);
   if (!existingCaddyMode && !caddy) return;
   if (caddy?.site.aliases?.length) {
     const expected = await detectPublicAddresses();

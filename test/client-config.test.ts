@@ -48,6 +48,7 @@ describe("client configuration", () => {
       branch: "main",
       webhookUrl: "https://example.com/hooks/github/example-com",
       service: "app",
+      port: 9100,
       healthPath: "/healthz",
       cutoverRequired: true,
     });

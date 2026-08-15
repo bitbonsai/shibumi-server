@@ -15,6 +15,7 @@ export interface InstallationPaths {
   dataDirectory: string;
   statusDirectory: string;
   historyDirectory: string;
+  logsDirectory: string;
   releasesDirectory: string;
   currentRelease: string;
   binDirectory: string;
@@ -176,6 +177,7 @@ export function installationPaths(home: string): InstallationPaths {
     dataDirectory,
     statusDirectory: join(dataDirectory, "status"),
     historyDirectory: join(dataDirectory, "history"),
+    logsDirectory: join(dataDirectory, "logs"),
     releasesDirectory: join(dataDirectory, "releases"),
     currentRelease: join(dataDirectory, "current"),
     binDirectory: join(home, ".local", "bin"),
@@ -264,6 +266,7 @@ export async function initializeInstallation(
   await mkdir(paths.releasesDirectory, { recursive: true, mode: 0o700 });
   await mkdir(paths.statusDirectory, { recursive: true, mode: 0o700 });
   await mkdir(paths.historyDirectory, { recursive: true, mode: 0o700 });
+  await mkdir(paths.logsDirectory, { recursive: true, mode: 0o700 });
   await mkdir(paths.binDirectory, { recursive: true, mode: 0o700 });
   await mkdir(paths.systemdDirectory, { recursive: true, mode: 0o700 });
 
@@ -502,6 +505,7 @@ export async function removeApp(
   await rm(join(paths.statusDirectory, `${appId}.json`), { force: true });
   await rm(join(paths.statusDirectory, "queue", `${appId}.json`), { force: true });
   await rm(join(paths.historyDirectory, `${appId}.jsonl`), { force: true });
+  await rm(join(paths.logsDirectory, `${appId}.log`), { force: true });
 
   let containerWarning: string | undefined;
   const [executable, ...prefix] = app.composeCommand;

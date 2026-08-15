@@ -11,6 +11,7 @@ import { addApp, initializeInstallation, installationPaths, uninstallInstallatio
 import { WebhookService } from "./server";
 import { DeploymentStatusStore } from "./status";
 import { DeploymentHistoryStore } from "./history";
+import { DeploymentLogStore } from "./deployment-log";
 import { DeploymentQueueStore } from "./queue";
 import { updateToLatest, warnIfUpdateAvailable } from "./update";
 import { SHIP_INSTALL_COMMAND } from "./terminal-ui";
@@ -68,6 +69,7 @@ async function serve(configPath: string, statusDirectory: string): Promise<void>
   const service = new WebhookService(config, {
     statusStore: new DeploymentStatusStore(statusDirectory),
     historyStore: new DeploymentHistoryStore(paths.historyDirectory),
+    logStore: new DeploymentLogStore(paths.logsDirectory),
     queueStore: new DeploymentQueueStore(`${statusDirectory}/queue`),
   });
   await service.resumeQueued();
@@ -189,10 +191,14 @@ try {
       tone: entry.state === "succeeded" ? "success" as const : entry.state === "failed" ? "warn" as const : "info" as const,
       message: `${entry.at}  ${entry.kind}  ${entry.state}  ${entry.commit.slice(0, 12)}${entry.stage ? `  ${entry.stage}` : ""}${entry.durationMs === undefined ? "" : `  ${entry.durationMs}ms`}`,
     })), `${entries.length} recent record${entries.length === 1 ? "" : "s"}`);
+  } else if (command.name === "logs") {
+    const value = await new DeploymentLogStore(installationPaths(homedir()).logsDirectory).read(command.appId);
+    if (!value) throw new Error(`No deployment log for ${command.appId}.\n\nNext: run shis list and confirm the app ID, or deploy the app first.`);
+    process.stdout.write(value);
   } else if (command.name === "rollback") {
     requireLinux();
     const { runRollback } = await import("./setup");
-    await runRollback(homedir(), command.appId, command.commit, command.yes);
+    await runRollback(homedir(), command.appId, command.yes);
   } else if (command.name === "redeploy") {
     requireLinux();
     const { triggerRedeploy } = await import("./redeploy");
@@ -200,7 +206,7 @@ try {
     console.log(`Redeploy accepted for ${command.commit}.`);
   } else if (command.name === "add") {
     requireLinux();
-    const { name: _, ...options } = command;
+    const { name: _, yes, ...options } = command;
     if (options.repository && options.checkout && options.hostPort !== undefined) {
       const { resolveComposeCommand } = await import("./setup");
       options.composeCommand = await resolveComposeCommand(options.composeCommand);
@@ -227,7 +233,7 @@ try {
       ], "Next: add the webhook route to Caddy before the app handler");
     } else {
       const { runInteractiveAdd } = await import("./setup");
-      await runInteractiveAdd({ home: homedir(), ...options });
+      await runInteractiveAdd({ home: homedir(), yes, ...options });
     }
   } else if (command.name === "check") {
     const config = await loadConfig(command.config);

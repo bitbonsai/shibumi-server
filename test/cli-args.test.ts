@@ -51,8 +51,9 @@ describe("CLI arguments", () => {
     expect(parseCliArgs(["history", "example-com", "--json"])).toEqual({
       name: "history", appId: "example-com", json: true,
     });
-    expect(parseCliArgs(["rollback", "example-com", "abcdef0", "--yes"])).toEqual({
-      name: "rollback", appId: "example-com", commit: "abcdef0", yes: true,
+    expect(parseCliArgs(["logs", "example-com"])).toEqual({ name: "logs", appId: "example-com" });
+    expect(parseCliArgs(["rollback", "example-com", "--yes"])).toEqual({
+      name: "rollback", appId: "example-com", yes: true,
     });
     expect(parseCliArgs(["redeploy", "example-com", "a".repeat(40)])).toEqual({
       name: "redeploy", appId: "example-com", commit: "a".repeat(40),
@@ -86,6 +87,7 @@ describe("CLI arguments", () => {
       name: "add",
       domain: "example.com",
       dryRun: false,
+      yes: false,
       repository: "owner/repo",
       checkout: "/srv/apps/example",
       hostPort: 9100,
@@ -120,10 +122,11 @@ describe("CLI arguments", () => {
   });
 
   test("allows interactive app registration and dry-run previews", () => {
-    expect(parseCliArgs(["add", "sub.example.com", "--dry-run"])).toMatchObject({
+    expect(parseCliArgs(["add", "sub.example.com", "--dry-run", "--yes"])).toMatchObject({
       name: "add",
       domain: "sub.example.com",
       dryRun: true,
+      yes: true,
       repository: undefined,
       checkout: undefined,
       hostPort: undefined,

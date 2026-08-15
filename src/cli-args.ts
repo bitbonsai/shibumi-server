@@ -10,7 +10,8 @@ export type CliCommand =
   | { name: "webhook-secret" | "caddy-cutover"; appId: string }
   | { name: "status"; appId: string; commit?: string; json: boolean }
   | { name: "history"; appId: string; json: boolean }
-  | { name: "rollback"; appId: string; commit: string; yes: boolean }
+  | { name: "logs"; appId: string }
+  | { name: "rollback"; appId: string; yes: boolean }
   | { name: "redeploy"; appId: string; commit: string }
   | { name: "init" }
   | { name: "uninstall"; purge: boolean; yes: boolean }
@@ -18,6 +19,7 @@ export type CliCommand =
       name: "add";
       domain: string;
       dryRun: boolean;
+      yes: boolean;
       repository?: string;
       checkout?: string;
       hostPort?: number;
@@ -62,7 +64,7 @@ ${heading("APPS")}
   ${command("shis remove <domain|app-id>")} [--yes]
       Remove an app; preserve checkout, volumes, images, and GitHub webhook
 
-  ${command("shis add <domain>")} [--dry-run]
+  ${command("shis add <domain>")} [--dry-run] [--yes]
       Add or preview an app interactively
 
   ${command("shis add <domain> \\")}
@@ -75,7 +77,8 @@ ${heading("APPS")}
 ${heading("OPERATIONS")}
   ${command("shis status <app-id>")} [--commit <sha>] [--json]
   ${command("shis history <app-id>")} [--json]
-  ${command("shis rollback <app-id> <sha>")} [--yes]
+  ${command("shis logs <app-id>")}                  Show latest deployment log
+  ${command("shis rollback <app-id>")} [--yes]
   ${command("shis redeploy <app-id> <full-sha>")}
   ${command("shis caddy-cutover <app-id>")}
   ${command("shis client-config <app-id>")} [--server-hostname <host>]
@@ -180,12 +183,16 @@ export function parseCliArgs(argv: string[]): CliCommand {
     return { name, appId, json: args.includes("--json") };
   }
 
+  if (name === "logs") {
+    if (args.length !== 1 || args[0].startsWith("--")) fail("logs requires an app id");
+    return { name, appId: args[0] };
+  }
+
   if (name === "rollback") {
-    const [appId, commit, ...flags] = args;
-    if (!appId || !commit) fail("rollback requires an app id and commit SHA");
-    if (!/^[a-f0-9]{7,40}$/.test(commit)) fail("rollback commit must be a lowercase SHA with 7 to 40 characters");
+    const [appId, ...flags] = args;
+    if (!appId || appId.startsWith("--")) fail("rollback requires an app id");
     if (flags.some((arg) => arg !== "--yes") || flags.filter((arg) => arg === "--yes").length > 1) fail("rollback accepts only one --yes flag");
-    return { name, appId, commit, yes: flags.includes("--yes") };
+    return { name, appId, yes: flags.includes("--yes") };
   }
 
   if (name === "redeploy") {
@@ -212,10 +219,12 @@ export function parseCliArgs(argv: string[]): CliCommand {
     const domain = beforeCommand.shift();
     if (!domain || domain.startsWith("--")) fail("add requires a domain");
     const dryRunCount = beforeCommand.filter((arg) => arg === "--dry-run").length;
+    const yesCount = beforeCommand.filter((arg) => arg === "--yes").length;
     if (dryRunCount > 1) fail("option may only be used once: --dry-run");
+    if (yesCount > 1) fail("option may only be used once: --yes");
     const dryRun = dryRunCount === 1;
 
-    const values = optionValues(beforeCommand.filter((arg) => arg !== "--dry-run"), new Set([
+    const values = optionValues(beforeCommand.filter((arg) => arg !== "--dry-run" && arg !== "--yes"), new Set([
       "--repository",
       "--checkout",
       "--port",
@@ -242,6 +251,7 @@ export function parseCliArgs(argv: string[]): CliCommand {
       name,
       domain,
       dryRun,
+      yes: yesCount === 1,
       repository,
       checkout: values.get("--checkout"),
       hostPort: portValue === undefined ? undefined : Number(portValue),

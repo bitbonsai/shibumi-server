@@ -73,9 +73,9 @@ describe("interactive setup", () => {
 
   test("keeps registered values when CLI options are undefined", () => {
     expect(mergeSetupAnswers(
-      { checkout: "/home/user/shibumi/example-com", hostPort: 9_100 },
+      { checkout: "/home/user/shibumi/example-com", hostPort: 9_001 },
       { checkout: undefined, hostPort: undefined, repository: "owner/example" },
-    )).toEqual({ checkout: "/home/user/shibumi/example-com", hostPort: 9_100, repository: "owner/example" });
+    )).toEqual({ checkout: "/home/user/shibumi/example-com", hostPort: 9_001, repository: "owner/example" });
   });
 
   test("derives a collision-free default checkout from the domain", () => {
@@ -112,9 +112,9 @@ describe("interactive setup", () => {
     const checked: number[] = [];
     const available = async (port: number) => {
       checked.push(port);
-      return port !== 9_102;
+      return port !== 9_003;
     };
-    expect(await nextAvailablePort(new Set([9_100, 9_101]), available)).toBe(9_103);
-    expect(checked).toEqual([9_102, 9_103]);
+    expect(await nextAvailablePort(new Set([9_001, 9_002]), available)).toBe(9_004);
+    expect(checked).toEqual([9_003, 9_004]);
   });
 });

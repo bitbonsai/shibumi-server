@@ -12,6 +12,7 @@ export interface ClientConfig {
   branch: string;
   webhookUrl: string;
   service: string;
+  port: number;
   healthPath: string;
   cutoverRequired: boolean;
 }
@@ -59,6 +60,7 @@ export async function createClientConfig(
     branch: app.ref.slice("refs/heads/".length),
     webhookUrl: `https://${app.domain}/hooks/github/${appId}`,
     service: app.service,
+    port: app.hostPort,
     healthPath: new URL(app.healthUrl).pathname,
     cutoverRequired: app.caddyMode === "preserve",
   };

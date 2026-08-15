@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AppConfig } from "../src/config";
-import { BunCommandRunner, deploy, DeploymentError, type CommandOptions, type CommandResult, type CommandRunner, type DeployDependencies, type Fetcher, type ResourceAvailability } from "../src/deploy";
+import { BunCommandRunner, deploy, DeploymentError, rollbackToPreviousImage, type CommandOptions, type CommandResult, type CommandRunner, type DeployDependencies, type Fetcher, type ResourceAvailability } from "../src/deploy";
 
 const commit = "a".repeat(40);
 const app: AppConfig = {
@@ -222,19 +222,42 @@ describe("deployment pipeline", () => {
     expect(runner.calls).toHaveLength(3);
   });
 
-  test("allows rollback only when the SHA is an ancestor of the configured branch", async () => {
-    const runner = new FakeRunner();
-    runner.responses = [
-      { exitCode: 0, stdout: "", stderr: "" },
-      { exitCode: 0, stdout: "", stderr: "" },
-      { exitCode: 0, stdout: `${"b".repeat(40)}\n`, stderr: "" },
-      { exitCode: 0, stdout: "", stderr: "" },
-    ];
+  test("restores the previous retained image without fetching or building", async () => {
+    const previousCommit = "b".repeat(40);
+    class RollbackRunner extends FakeRunner {
+      runningImage = "sha256:current";
 
-    await deploy("myapp", app, commit, dependencies(runner), { allowAncestor: true });
+      override async run(command: string, args: string[], options?: CommandOptions): Promise<CommandResult> {
+        if (command === "podman" && args[0] === "container" && args[1] === "inspect") {
+          this.calls.push({ command, args, options });
+          return { exitCode: 0, stdout: `${args[3] === "{{.Config.Image}}" ? "localhost/myapp:web" : this.runningImage}\n`, stderr: "" };
+        }
+        if (command === "podman" && args[0] === "image" && args[1] === "list") {
+          this.calls.push({ command, args, options });
+          return { exitCode: 0, stdout: "release-1700000002000-aaaaaaaaaaaa\nrelease-1700000001000-bbbbbbbbbbbb\n", stderr: "" };
+        }
+        if (command === "podman" && args[0] === "image" && args[1] === "inspect") {
+          this.calls.push({ command, args, options });
+          return { exitCode: 0, stdout: `${args[4].endsWith("aaaaaaaaaaaa") ? "sha256:current" : "sha256:previous"}\n`, stderr: "" };
+        }
+        if (command === "git" && args.includes("rev-parse")) {
+          this.calls.push({ command, args, options });
+          return { exitCode: 0, stdout: `${previousCommit}\n`, stderr: "" };
+        }
+        if (args.includes("up")) this.runningImage = "sha256:previous";
+        return super.run(command, args, options);
+      }
+    }
+    const runner = new RollbackRunner();
+    let target = "";
 
-    expect(runner.calls[3]).toMatchObject({ command: "git", args: ["-C", app.checkout, "merge-base", "--is-ancestor", commit, "FETCH_HEAD"] });
-    expect(runner.calls[4]).toMatchObject({ command: "git", args: ["-C", app.checkout, "reset", "--hard", commit] });
+    await expect(rollbackToPreviousImage("myapp", app, dependencies(runner), (commit) => { target = commit; })).resolves.toBe(previousCommit);
+
+    expect(target).toBe(previousCommit);
+    expect(runner.calls.some(({ command, args }) => command === "podman" && args.slice(0, 4).join(" ") === "image tag sha256:previous localhost/myapp:web")).toBe(true);
+    expect(runner.calls.some(({ args }) => args.includes("--no-build") && args.includes("--force-recreate"))).toBe(true);
+    expect(runner.calls.some(({ command, args }) => command === "git" && args.includes("fetch"))).toBe(false);
+    expect(runner.calls.some(({ args }) => args.includes("build"))).toBe(false);
   });
 
   test("does not start the app when the build fails", async () => {

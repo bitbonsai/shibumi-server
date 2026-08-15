@@ -5,6 +5,7 @@ import { isGitHubSignature, normalizeGitHubDeliveryId, parseGitHubPush, verifyGi
 import { AppLocks } from "./locks";
 import { DeploymentStatusStore, type DeploymentState } from "./status";
 import { DeploymentHistoryStore } from "./history";
+import { DeploymentLogStore } from "./deployment-log";
 import { DeploymentQueueStore, type QueuedDeployment } from "./queue";
 
 class BodyTooLargeError extends Error {}
@@ -49,6 +50,7 @@ export interface WebhookServiceOptions {
   logger?: DeploymentLogger;
   statusStore?: DeploymentStatusStore;
   historyStore?: DeploymentHistoryStore;
+  logStore?: DeploymentLogStore;
   queueStore?: DeploymentQueueStore;
 }
 
@@ -60,6 +62,7 @@ export class WebhookService {
   readonly #logger: DeploymentLogger;
   readonly #statusStore?: DeploymentStatusStore;
   readonly #historyStore?: DeploymentHistoryStore;
+  readonly #logStore?: DeploymentLogStore;
   readonly #queueStore?: DeploymentQueueStore;
   readonly #tasks = new Set<Promise<void>>();
   readonly #queueOperations = new Map<string, Promise<void>>();
@@ -76,6 +79,7 @@ export class WebhookService {
     this.#deliveries = options.deliveries ?? new DeliveryCache();
     this.#statusStore = options.statusStore;
     this.#historyStore = options.historyStore;
+    this.#logStore = options.logStore;
     this.#queueStore = options.queueStore;
   }
 
@@ -114,6 +118,26 @@ export class WebhookService {
     }
   }
 
+  async #startLog(appId: string, commit: string): Promise<void> {
+    try {
+      await this.#logStore?.start(appId, commit);
+    } catch (error) {
+      this.#logger.error("cannot start deployment log", { app: appId, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  async #appendLog(appId: string, stage: string, value: string): Promise<void> {
+    try {
+      let redacted = value;
+      for (const [key, secret] of Object.entries(this.#environment)) {
+        if (secret && secret.length >= 8 && /(?:SECRET|TOKEN|PASSWORD|CREDENTIAL|PRIVATE_KEY)/i.test(key)) redacted = redacted.replaceAll(secret, "[redacted]");
+      }
+      await this.#logStore?.append(appId, stage, redacted);
+    } catch (error) {
+      this.#logger.error("cannot append deployment log", { app: appId, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
   async #withQueue<T>(appId: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.#queueOperations.get(appId) ?? Promise.resolve();
     let release!: () => void;
@@ -137,6 +161,8 @@ export class WebhookService {
       while (request) {
         const { commit, delivery } = request;
         const startedAt = Date.now();
+        await this.#startLog(appId, commit);
+        await this.#appendLog(appId, "accepted", "Deployment accepted");
         await this.#writeStatus(appId, commit, "accepted", "accepted");
         await this.#writeHistory({ appId, commit, kind: "webhook", state: "accepted", delivery });
         let latestOutput: string | undefined;
@@ -145,6 +171,7 @@ export class WebhookService {
           onStage: async (stage) => {
             latestOutput = undefined;
             await this.#deployDependencies.onStage?.(stage);
+            await this.#appendLog(appId, stage, "Started");
             await this.#writeStatus(appId, commit, "running", stage);
           },
           onOutput: async (stage, line) => {
@@ -152,6 +179,7 @@ export class WebhookService {
             const output = line.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 512);
             if (output) {
               latestOutput = output;
+              await this.#appendLog(appId, stage, output);
               await this.#writeStatus(appId, commit, "running", stage, undefined, output);
             }
           },
@@ -159,6 +187,7 @@ export class WebhookService {
         try {
           await deploy(appId, app, commit, dependencies);
           await this.#writeStatus(appId, commit, "succeeded", "shipped");
+          await this.#appendLog(appId, "shipped", `Succeeded in ${Date.now() - startedAt}ms`);
           await this.#writeHistory({ appId, commit, kind: "webhook", state: "succeeded", delivery, durationMs: Date.now() - startedAt });
         } catch (error) {
           this.#deliveries.forget(appId, delivery);
@@ -171,6 +200,7 @@ export class WebhookService {
             (error instanceof Error ? error.message : "deployment failed").replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 512),
             latestOutput,
           );
+          await this.#appendLog(appId, stage, error instanceof Error ? error.message : String(error));
           await this.#writeHistory({ appId, commit, kind: "webhook", state: "failed", delivery, stage, durationMs: Date.now() - startedAt });
           this.#logger.error("deployment failed", { app: appId, commit, error: error instanceof Error ? error.message : String(error) });
         }

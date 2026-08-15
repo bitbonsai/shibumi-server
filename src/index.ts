@@ -3,6 +3,7 @@ export * from "./caddy-sudo";
 export * from "./client-config";
 export * from "./config";
 export * from "./deploy";
+export * from "./deployment-log";
 export * from "./domain";
 export * from "./deliveries";
 export * from "./github";

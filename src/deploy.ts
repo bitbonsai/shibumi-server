@@ -49,10 +49,6 @@ export interface DeployDependencies {
   onOutput?(stage: string, line: string): void | Promise<void>;
 }
 
-export interface DeployOptions {
-  allowAncestor?: boolean;
-}
-
 export class DeploymentError extends Error {
   constructor(
     readonly stage: string,
@@ -361,12 +357,82 @@ async function restoreRelease(
   }
 }
 
+export async function rollbackToPreviousImage(
+  appId: string,
+  app: AppConfig,
+  dependencies: DeployDependencies,
+  onTarget?: (commit: string) => void | Promise<void>,
+): Promise<string> {
+  const startedAt = Date.now();
+  const [composeExecutable, ...composePrefix] = app.composeCommand;
+  const compose = [...composePrefix, "--project-name", app.composeProject, "--file", composePath(app)];
+  const options: CommandOptions = { env: { SHIBUMI_PORT: String(app.hostPort) } };
+  await runChecked(dependencies, "config", composeExecutable, [...compose, "config", "--quiet"], options);
+  const current = await runningRelease(app, composeExecutable, compose, options, dependencies);
+  if (!current) throw new DeploymentError("rollback", "cannot find the running application image");
+
+  const repository = `localhost/shibumi-server/${appId}`;
+  const listed = await runChecked(
+    dependencies,
+    "rollback",
+    "podman",
+    ["image", "list", "--filter", `reference=${repository}:release-*`, "--format", "{{.Tag}}"],
+    { capture: true },
+  );
+  const tags = listed.stdout.split(/\r?\n/).filter((tag) => /^release-\d{13}-[a-f0-9]{12}$/.test(tag)).sort().reverse();
+  let previous: { imageId: string; commitPrefix: string } | undefined;
+  for (const tag of tags) {
+    const inspected = await runChecked(
+      dependencies,
+      "rollback",
+      "podman",
+      ["image", "inspect", "--format", "{{.Id}}", `${repository}:${tag}`],
+      { capture: true },
+    );
+    const imageId = inspected.stdout.trim();
+    if (imageId && imageId !== current.imageId) {
+      previous = { imageId, commitPrefix: tag.slice(-12) };
+      break;
+    }
+  }
+  if (!previous) throw new DeploymentError("rollback", "no previous application image is retained");
+
+  const resolved = await runChecked(
+    dependencies,
+    "rollback",
+    "git",
+    ["-C", app.checkout, "rev-parse", "--verify", `${previous.commitPrefix}^{commit}`],
+    { capture: true },
+  );
+  const commit = resolved.stdout.trim().toLowerCase();
+  if (!/^[a-f0-9]{40}$/.test(commit)) throw new DeploymentError("rollback", "retained image commit cannot be resolved");
+
+  await onTarget?.(commit);
+  await dependencies.onStage?.("rollback");
+  try {
+    await runChecked(dependencies, "rollback", "podman", ["image", "tag", previous.imageId, current.imageName], { capture: true });
+    await runChecked(
+      dependencies,
+      "rollback",
+      composeExecutable,
+      [...compose, "up", "-d", "--no-build", "--force-recreate", app.service],
+      options,
+    );
+    await dependencies.onStage?.("health");
+    await waitForHealth(app, dependencies);
+  } catch (error) {
+    await restoreRelease(app, current, composeExecutable, compose, options, dependencies);
+    throw error;
+  }
+  await retainReleaseImages(appId, app, commit, startedAt, composeExecutable, compose, options, dependencies);
+  return commit;
+}
+
 export async function deploy(
   appId: string,
   app: AppConfig,
   commit: string,
   dependencies: DeployDependencies,
-  deployOptions: DeployOptions = {},
 ): Promise<void> {
   const startedAt = Date.now();
   await dependencies.onStage?.("preflight");
@@ -379,9 +445,7 @@ export async function deploy(
 
   await git(["fetch", "--prune", "origin", app.ref], "fetch");
   const fetched = await git(["rev-parse", "FETCH_HEAD"], "verify", true);
-  if (deployOptions.allowAncestor) {
-    await git(["merge-base", "--is-ancestor", commit, "FETCH_HEAD"], "verify");
-  } else if (fetched.stdout.trim().toLowerCase() !== commit) {
+  if (fetched.stdout.trim().toLowerCase() !== commit) {
     throw new DeploymentError("verify", "fetched branch no longer matches the webhook commit");
   }
   await git(["reset", "--hard", commit], "checkout");

@@ -290,9 +290,11 @@ describe("app registration", () => {
     const paths = installationPaths(home);
     await mkdir(join(paths.statusDirectory, "queue"), { recursive: true });
     await mkdir(paths.historyDirectory, { recursive: true });
+    await mkdir(paths.logsDirectory, { recursive: true });
     await writeFile(join(paths.statusDirectory, "example-com.json"), "{}\n");
     await writeFile(join(paths.statusDirectory, "queue", "example-com.json"), "{}\n");
     await writeFile(join(paths.historyDirectory, "example-com.jsonl"), "{}\n");
+    await writeFile(join(paths.logsDirectory, "example-com.log"), "build output\n");
     const runner = new FakeRunner();
 
     expect((await registeredApps(home)).map((app) => app.domain)).toEqual(["example.com", "second.example"]);
@@ -305,6 +307,7 @@ describe("app registration", () => {
     expect(await Bun.file(join(paths.statusDirectory, "example-com.json")).exists()).toBe(false);
     expect(await Bun.file(join(paths.statusDirectory, "queue", "example-com.json")).exists()).toBe(false);
     expect(await Bun.file(join(paths.historyDirectory, "example-com.jsonl")).exists()).toBe(false);
+    expect(await Bun.file(join(paths.logsDirectory, "example-com.log")).exists()).toBe(false);
     expect(await readFile(paths.secrets, "utf8")).not.toContain("SHIBUMI_SECRET_EXAMPLE_COM=");
     expect(await readFile(paths.secrets, "utf8")).toContain("SHIBUMI_SECRET_SECOND_EXAMPLE=");
     expect(services.restarts).toBe(3);
