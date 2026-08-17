@@ -476,13 +476,17 @@ export async function deploy(
   await git(["reset", "--hard", commit], "checkout");
 
   let invocation = composeInvocation(appId, app);
+  let sourceTree: string | undefined;
   if (app.deploymentMode === "prebuilt") {
+    const tree = await git(["rev-parse", `${commit}^{tree}`], "verify", true);
+    sourceTree = tree.stdout.trim().toLowerCase();
+    if (!/^[a-f0-9]{40}$/.test(sourceTree)) throw new DeploymentError("verify", "commit source tree cannot be resolved");
     await dependencies.onStage?.("image");
     let uploaded: string;
     try {
-      uploaded = await inspectPrebuiltImage(dependencies.runner, appId, commit);
+      uploaded = await inspectPrebuiltImage(dependencies.runner, appId, commit, app.repository, sourceTree);
     } catch (error) {
-      throw new DeploymentError("image", `${error instanceof Error ? error.message : String(error)}. Upload it with bun run ship, then retry.`);
+      throw new DeploymentError("image", `${error instanceof Error ? error.message : String(error)}. Upload it with bun ship, then retry.`);
     }
     invocation = composeInvocation(appId, app, uploaded);
   }
@@ -510,7 +514,7 @@ export async function deploy(
 
   const previous = await runningRelease(app, composeExecutable, compose, options, dependencies);
   if (app.deploymentMode === "prebuilt") {
-    const uploaded = await inspectPrebuiltImage(dependencies.runner, appId, commit);
+    const uploaded = await inspectPrebuiltImage(dependencies.runner, appId, commit, app.repository, sourceTree);
     const runtime = runtimeImage(appId);
     await runChecked(dependencies, "image", "podman", ["image", "tag", uploaded, runtime], { capture: true });
     invocation = composeInvocation(appId, app, runtime);

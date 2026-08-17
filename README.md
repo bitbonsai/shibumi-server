@@ -2,13 +2,13 @@
 
 Small, secure webhook deployments for a VPS running rootless Podman.
 
-> Experimental: release `0.7.2` is being dogfooded.
+> Experimental: release `0.7.11` is being dogfooded.
 
 Installed commands use short name `shis`. Original `shibumi-server` remains a compatible alias. Interactive output uses Clack's native interface with persimmon branding and plain text when color is unavailable.
 
 ## How it works
 
-The project-owned `bun run ship` client checks committed code, builds the server's Linux architecture image on the developer machine, and uploads it through SSH before pushing Git. A signed GitHub push webhook then causes `shibumi-server` to fetch the exact commit, verify the uploaded image tag and platform, replace the old container with Podman Compose without building, and check the new container's local health endpoint. Manual registrations can retain server-side builds with `deploymentMode: "build"`.
+The project-owned `bun ship` client checks committed code, builds the server's Linux architecture image on the developer machine, and uploads it through SSH before pushing Git. A signed GitHub push webhook then causes `shibumi-server` to fetch the exact commit, verify its repository, app, revision, source-tree, tag, and platform labels, replace the old container with Podman Compose without building, and check the new container's local health endpoint. Manual registrations can retain server-side builds with `deploymentMode: "build"`.
 
 ```text
 local build → SSH image upload → Git push → signed webhook → verify → rootless Podman → health check
@@ -72,7 +72,7 @@ Recommended onboarding starts from your local project root:
 curl -fsSL https://shibumistack.dev/install/ship.sh | sh
 ```
 
-Owned ship setup connects through confirmed SSH, installs or upgrades `shibumi-server` when needed, enables prebuilt deployments, registers the app, and configures GitHub. Normal shipping requires Docker Desktop or compatible Docker Engine locally. If DNS or webhook delivery is pending, setup files remain in the project and setup resumes with `bun run ship:setup`.
+Owned ship setup connects through confirmed SSH, installs or upgrades `shibumi-server` when needed, enables prebuilt deployments, registers the app, and configures GitHub. Normal shipping requires Docker Desktop or compatible Docker Engine locally. If DNS or webhook delivery is pending, setup files remain in the project and setup resumes with `bun ship:setup`.
 
 Server operators can prepare the host directly by logging in as the deployment user and running:
 
@@ -93,7 +93,7 @@ Interactive app setup retries transient DNS failures, falls back to the server's
 For scripts and unattended setup, pin the bootstrap release and provide every app value explicitly:
 
 ```bash
-bunx shibumi-server@0.7.2 init
+bunx shibumi-server@0.7.11 init
 shis add example.com \
   --repository github:owner/repository \
   --checkout /srv/shibumi/apps/example-com \
@@ -101,7 +101,7 @@ shis add example.com \
   --deployment-mode prebuilt
 ```
 
-`init` stores the release under `~/.local/share/shibumi-server/releases/0.7.2`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. Prebuilt mode accepts only an exact commit-tagged Linux image loaded through `shis image-load`; build mode remains available for manual server builds. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
+`init` stores the release under `~/.local/share/shibumi-server/releases/0.7.11`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. Prebuilt mode accepts only an exact commit-tagged Linux image loaded through `shis image-load`; build mode remains available for manual server builds. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
 
 List or remove registered apps with branded server-side flows:
 

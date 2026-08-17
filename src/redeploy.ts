@@ -30,6 +30,6 @@ export async function triggerRedeploy(home: string, appId: string, commit: strin
     signal: AbortSignal.timeout(10_000),
   });
   if (response.status === 202) return;
-  if (response.status === 409) throw new Error(`deployment already in progress for ${appId}.\n\nNext: update shibumi-server to enable deployment queueing, then rerun bun run ship.`);
-  throw new Error(`redeploy request failed with HTTP ${response.status}.\n\nNext: inspect systemctl --user status shibumi-server, then rerun bun run ship.`);
+  if (response.status === 409) throw new Error(`deployment already in progress for ${appId}.\n\nNext: update shibumi-server to enable deployment queueing, then rerun bun ship.`);
+  throw new Error(`redeploy request failed with HTTP ${response.status}.\n\nNext: inspect systemctl --user status shibumi-server, then rerun bun ship.`);
 }

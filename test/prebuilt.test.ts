@@ -20,6 +20,12 @@ class FakeRunner implements CommandRunner {
           Os: "linux",
           Architecture: process.arch === "arm64" ? "arm64" : "amd64",
           RepoTags: [args[2]],
+          Labels: {
+            "dev.shibumistack.app-id": "myapp",
+            "org.opencontainers.image.revision": "a".repeat(40),
+            "org.opencontainers.image.source": "https://github.com/owner/repo",
+            "dev.shibumistack.source-tree": "b".repeat(40),
+          },
         }]),
         stderr: "",
       };
@@ -66,6 +72,23 @@ describe("prebuilt images", () => {
       ["image", "inspect"],
     ]);
     expect(runner.calls[1].options?.stdin).toBe("inherit");
+  });
+
+  test("rejects images whose identity labels do not match", async () => {
+    const runner = new FakeRunner();
+    const path = await config("prebuilt");
+    runner.run = async (command, args, options) => {
+      runner.calls.push({ command, args, options });
+      if (args[0] === "image" && args[1] === "inspect") return {
+        exitCode: 0,
+        stdout: JSON.stringify([{ Os: "linux", Architecture: process.arch === "arm64" ? "arm64" : "amd64", RepoTags: [args[2]], Labels: {} }]),
+        stderr: "",
+      };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    await expect(loadPrebuiltImage(path, "myapp", "a".repeat(40), 1024, runner)).rejects.toThrow("app identity");
+    expect(runner.calls.at(-1)?.args.slice(0, 2)).toEqual(["image", "rm"]);
   });
 
   test("rejects uploads until prebuilt mode is enabled", async () => {

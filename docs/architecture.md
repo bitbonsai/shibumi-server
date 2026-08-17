@@ -12,7 +12,7 @@ local client verifies clean committed work
   → Caddy proxies the webhook path to localhost
   → shibumi-server verifies the signature, repository, and branch
   → shibumi-server fetches the exact commit
-  → Podman verifies the preloaded image tag and platform
+  → Podman verifies image identity labels, source tree, tag, and platform
   → optional app-owned tests run in a temporary container
   → Podman replaces the application container
   → shibumi-server checks the local health endpoint
@@ -61,7 +61,7 @@ The fetched commit must exactly match the signed webhook payload. Runtime data a
 
 The owned ship client refuses dirty work, runs project checks, and creates its Docker build context with `git archive` from exact `HEAD`. Ignored files, untracked files, local credentials, and machine-built `node_modules` do not enter the image context. Git submodules currently fail closed.
 
-Docker Compose builds the image for the platform exported by the server, such as `linux/arm64`. The client saves it under `localhost/shibumi-server/upload/<app-id>:<full-commit>` and streams the archive through the existing SSH connection to `shis image-load`. The server accepts stdin only for a registered prebuilt app, validates the declared archive size against free disk plus the configured floor, removes any older copy of that exact tag, loads with rootless Podman, then verifies the exact tag and server platform. Upload must finish before Git push, so the signed webhook cannot race a missing image.
+Docker Compose builds the image for the platform exported by the server, such as `linux/arm64`. A generic Compose override adds the repository, app ID, full revision, and Git source-tree labels without changing the app Dockerfile. The client saves the image under `localhost/shibumi-server/upload/<app-id>:<full-commit>` and streams the archive through the existing SSH connection to `shis image-load`. The server accepts stdin only for a registered prebuilt app, validates the declared archive size against free disk plus the configured floor, removes any older copy of that exact tag, loads with rootless Podman, then verifies labels, exact tag, and server platform. After fetching the signed webhook commit, it independently resolves the Git tree and requires the image tree label to match. Upload must finish before Git push, so the signed webhook cannot race a missing image.
 
 After the webhook verifies and fetches the same commit, Shibumi validates Compose with a generated image override, runs optional tests against the exact uploaded image, tags it as the app's stable runtime image, and starts with `--no-build`. A failed test never starts it. A failed startup or health check restores the prior runtime image. Successful retention removes the temporary upload tag. Build mode remains available for manual registrations.
 

@@ -3,6 +3,7 @@ import type { AppConfig } from "../src/config";
 import { BunCommandRunner, deploy, DeploymentError, rollbackToPreviousImage, type CommandOptions, type CommandResult, type CommandRunner, type DeployDependencies, type Fetcher, type ResourceAvailability } from "../src/deploy";
 
 const commit = "a".repeat(40);
+const sourceTree = "b".repeat(40);
 const app: AppConfig = {
   repository: "owner/repo",
   ref: "refs/heads/main",
@@ -32,6 +33,7 @@ class FakeRunner implements CommandRunner {
     this.calls.push({ command, args, options });
     const response = this.responses.shift();
     if (response) return response;
+    if (command === "git" && args.at(-1) === `${commit}^{tree}`) return { exitCode: 0, stdout: `${sourceTree}\n`, stderr: "" };
     if (args.includes("ps") && args.includes("--quiet")) return { exitCode: 0, stdout: "container-id\n", stderr: "" };
     if (args[0] === "container" && args[1] === "list") return { exitCode: 0, stdout: "container-id\n", stderr: "" };
     if (args[0] === "container" && args[1] === "inspect") return { exitCode: 0, stdout: "sha256:image-id\n", stderr: "" };
@@ -99,7 +101,17 @@ describe("deployment pipeline", () => {
           const image = `localhost/shibumi-server/upload/myapp:${commit}`;
           return {
             exitCode: 0,
-            stdout: JSON.stringify([{ Os: "linux", Architecture: process.arch === "arm64" ? "arm64" : "amd64", RepoTags: [image] }]),
+            stdout: JSON.stringify([{
+              Os: "linux",
+              Architecture: process.arch === "arm64" ? "arm64" : "amd64",
+              RepoTags: [image],
+              Labels: {
+                "dev.shibumistack.app-id": "myapp",
+                "org.opencontainers.image.revision": commit,
+                "org.opencontainers.image.source": "https://github.com/owner/repo",
+                "dev.shibumistack.source-tree": sourceTree,
+              },
+            }]),
             stderr: "",
           };
         }
@@ -145,7 +157,7 @@ describe("deployment pipeline", () => {
     ];
 
     await expect(deploy("myapp", { ...app, deploymentMode: "prebuilt" }, commit, dependencies(runner))).rejects.toEqual(
-      new DeploymentError("image", `prebuilt image ${commit} is not loaded. Upload it with bun run ship, then retry.`),
+      new DeploymentError("image", `prebuilt image ${commit} is not loaded. Upload it with bun ship, then retry.`),
     );
     expect(runner.calls.some(({ args }) => args.includes("up"))).toBe(false);
   });

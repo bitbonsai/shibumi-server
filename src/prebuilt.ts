@@ -22,12 +22,20 @@ interface ImageInspect {
   Os?: unknown;
   Architecture?: unknown;
   RepoTags?: unknown;
+  Labels?: unknown;
 }
+
+const APP_LABEL = "dev.shibumistack.app-id";
+const REVISION_LABEL = "org.opencontainers.image.revision";
+const SOURCE_LABEL = "org.opencontainers.image.source";
+const TREE_LABEL = "dev.shibumistack.source-tree";
 
 export async function inspectPrebuiltImage(
   runner: CommandRunner,
   appId: string,
   commit: string,
+  repository: string,
+  tree?: string,
 ): Promise<string> {
   const image = uploadedImage(appId, commit);
   const inspected = await runner.run("podman", ["image", "inspect", image], { capture: true });
@@ -43,6 +51,13 @@ export async function inspectPrebuiltImage(
   const platform = `${details.Os}/${details.Architecture}`;
   if (platform !== serverPlatform()) throw new Error(`prebuilt image platform is ${platform}; ${serverPlatform()} required`);
   if (!Array.isArray(details.RepoTags) || !details.RepoTags.includes(image)) throw new Error("prebuilt image tag does not match commit");
+  if (!details.Labels || typeof details.Labels !== "object" || Array.isArray(details.Labels)) throw new Error("prebuilt image identity labels are missing");
+  const labels = details.Labels as Record<string, unknown>;
+  if (labels[APP_LABEL] !== appId) throw new Error("prebuilt image app identity does not match");
+  if (labels[REVISION_LABEL] !== commit) throw new Error("prebuilt image revision does not match commit");
+  if (labels[SOURCE_LABEL] !== `https://github.com/${repository}`) throw new Error("prebuilt image source does not match repository");
+  if (typeof labels[TREE_LABEL] !== "string" || !COMMIT.test(labels[TREE_LABEL])) throw new Error("prebuilt image source tree is invalid");
+  if (tree && labels[TREE_LABEL] !== tree) throw new Error("prebuilt image source tree does not match commit");
   return image;
 }
 
@@ -66,7 +81,7 @@ export async function loadPrebuiltImage(
   const availableBytes = filesystem.bavail * filesystem.bsize;
   const floorBytes = app.minimumFreeDiskMb * 1024 ** 2;
   if (availableBytes - archiveBytes < floorBytes) {
-    throw new Error(`prebuilt image needs ${Math.ceil(archiveBytes / 1024 ** 2)} MiB plus ${app.minimumFreeDiskMb} MiB free disk.\n\nNext: free server disk space, then rerun bun run ship.`);
+    throw new Error(`prebuilt image needs ${Math.ceil(archiveBytes / 1024 ** 2)} MiB plus ${app.minimumFreeDiskMb} MiB free disk.\n\nNext: free server disk space, then rerun bun ship.`);
   }
 
   const image = uploadedImage(appId, commit);
@@ -74,7 +89,7 @@ export async function loadPrebuiltImage(
   const loaded = await runner.run("podman", ["image", "load"], { capture: true, stdin: "inherit" });
   if (loaded.exitCode !== 0) throw new Error(loaded.stderr.trim() || "Podman could not load prebuilt image");
   try {
-    await inspectPrebuiltImage(runner, appId, commit);
+    await inspectPrebuiltImage(runner, appId, commit, app.repository);
   } catch (error) {
     await runner.run("podman", ["image", "rm", image], { capture: true });
     throw error;
