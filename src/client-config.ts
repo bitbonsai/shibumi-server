@@ -14,12 +14,20 @@ export interface ClientConfig {
   service: string;
   port: number;
   healthPath: string;
+  deploymentMode: "build" | "prebuilt";
+  platform: `linux/${string}`;
   cutoverRequired: boolean;
 }
 
 type HostnameResolver = () => Promise<string>;
 
 const SAFE_HOSTNAME = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
+
+function imagePlatform(): `linux/${string}` {
+  if (process.arch === "arm64") return "linux/arm64";
+  if (process.arch === "x64") return "linux/amd64";
+  throw new Error(`unsupported server architecture: ${process.arch}`);
+}
 
 async function systemHostname(): Promise<string> {
   const result = Bun.spawnSync(["hostname", "-f"], { stdout: "pipe", stderr: "ignore" });
@@ -62,6 +70,8 @@ export async function createClientConfig(
     service: app.service,
     port: app.hostPort,
     healthPath: new URL(app.healthUrl).pathname,
+    deploymentMode: app.deploymentMode,
+    platform: imagePlatform(),
     cutoverRequired: app.caddyMode === "preserve",
   };
 }

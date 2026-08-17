@@ -50,6 +50,8 @@ describe("client configuration", () => {
       service: "app",
       port: 9100,
       healthPath: "/healthz",
+      deploymentMode: "build",
+      platform: process.arch === "arm64" ? "linux/arm64" : "linux/amd64",
       cutoverRequired: true,
     });
   });

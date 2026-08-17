@@ -44,6 +44,7 @@ export interface AddAppOptions {
   composeCommand?: string[];
   service?: string;
   healthPath?: string;
+  deploymentMode?: "build" | "prebuilt";
   caddyMode?: "preserve" | "managed";
 }
 
@@ -415,12 +416,13 @@ export async function addApp(
         testCommand: options.testCommand,
         healthUrl: `http://127.0.0.1:${options.hostPort}${healthPath}`,
         secretEnvironmentVariable,
-        minimumFreeMemoryMb: 2_048,
+        minimumFreeMemoryMb: options.deploymentMode === "prebuilt" ? 512 : 2_048,
         minimumFreeDiskMb: 4_096,
         buildTimeoutMs: 600_000,
         healthAttempts: 20,
         healthIntervalMs: 500,
         retainedRollbackImages: 1,
+        deploymentMode: options.deploymentMode ?? "build",
         caddyMode: options.caddyMode,
       },
     },
@@ -453,6 +455,29 @@ export async function addApp(
 
   await services.enableAndRestart();
   return { appId, secretEnvironmentVariable, config: parsed };
+}
+
+export async function enablePrebuiltApp(
+  home: string,
+  appId: string,
+  services: ServiceManager = new SystemdUserServiceManager(),
+): Promise<void> {
+  const paths = installationPaths(resolve(home));
+  const root = await rawConfig(paths.config);
+  const apps = root.apps;
+  if (!apps || typeof apps !== "object" || Array.isArray(apps)) throw new Error("config.apps must be an object");
+  const app = (apps as Record<string, unknown>)[appId];
+  if (!app || typeof app !== "object" || Array.isArray(app)) throw new Error(`unknown app: ${appId}`);
+  const candidate = {
+    ...root,
+    apps: {
+      ...apps as Record<string, unknown>,
+      [appId]: { ...app as Record<string, unknown>, deploymentMode: "prebuilt", minimumFreeMemoryMb: 512 },
+    },
+  };
+  parseConfig(candidate);
+  await atomicWrite(paths.config, `${JSON.stringify(candidate, null, 2)}\n`, 0o600);
+  await services.enableAndRestart();
 }
 
 export async function registeredApps(home: string): Promise<RegisteredApp[]> {

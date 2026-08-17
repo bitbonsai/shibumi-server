@@ -58,6 +58,10 @@ describe("CLI arguments", () => {
     expect(parseCliArgs(["redeploy", "example-com", "a".repeat(40)])).toEqual({
       name: "redeploy", appId: "example-com", commit: "a".repeat(40),
     });
+    expect(parseCliArgs(["image-load", "example-com", "a".repeat(40), "1024"])).toEqual({
+      name: "image-load", appId: "example-com", commit: "a".repeat(40), archiveBytes: 1024,
+    });
+    expect(parseCliArgs(["enable-prebuilt", "example-com"])).toEqual({ name: "enable-prebuilt", appId: "example-com" });
   });
 
   test("parses check and serve config paths", () => {
@@ -81,6 +85,7 @@ describe("CLI arguments", () => {
       "--compose-command", "podman-compose",
       "--service", "app",
       "--health-path", "/ready",
+      "--deployment-mode", "prebuilt",
       "--",
       "bun", "test", "--timeout", "10000",
     ])).toEqual({
@@ -97,6 +102,7 @@ describe("CLI arguments", () => {
       composeCommand: ["podman-compose"],
       service: "app",
       healthPath: "/ready",
+      deploymentMode: "prebuilt",
     });
   });
 
@@ -160,6 +166,7 @@ describe("CLI arguments", () => {
     expect(() => parseCliArgs(["status", "example-com", "--json", "--json"])).toThrow("only be used once");
     expect(() => parseCliArgs(["check", "--config", "a", "--config", "b"])).toThrow("only be used once");
     expect(() => parseCliArgs(["add", "example.com", "--dry-run", "--dry-run"])).toThrow("only be used once");
+    expect(() => parseCliArgs(["add", "example.com", "--deployment-mode", "remote"])).toThrow("build or prebuilt");
     expect(() => parseCliArgs([
       "add", "example.com",
       "--repository", "owner/repo",

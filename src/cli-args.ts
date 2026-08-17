@@ -7,7 +7,8 @@ export type CliCommand =
   | { name: "remove"; app: string; yes: boolean }
   | { name: "check" | "serve"; config: string }
   | { name: "client-config"; appId: string; serverHostname?: string }
-  | { name: "webhook-secret" | "caddy-cutover"; appId: string }
+  | { name: "webhook-secret" | "caddy-cutover" | "enable-prebuilt"; appId: string }
+  | { name: "image-load"; appId: string; commit: string; archiveBytes: number }
   | { name: "status"; appId: string; commit?: string; json: boolean }
   | { name: "history"; appId: string; json: boolean }
   | { name: "logs"; appId: string }
@@ -29,6 +30,7 @@ export type CliCommand =
       composeCommand?: string[];
       service?: string;
       healthPath?: string;
+      deploymentMode?: "build" | "prebuilt";
     };
 
 const ansi = {
@@ -80,6 +82,8 @@ ${heading("OPERATIONS")}
   ${command("shis logs <app-id>")}                  Show latest deployment log
   ${command("shis rollback <app-id>")} [--yes]
   ${command("shis redeploy <app-id> <full-sha>")}
+  ${command("shis image-load <app-id> <full-sha> <bytes>")} Load prebuilt image from stdin
+  ${command("shis enable-prebuilt <app-id>")}
   ${command("shis caddy-cutover <app-id>")}
   ${command("shis client-config <app-id>")} [--server-hostname <host>]
   ${command("shis webhook-secret <app-id>")}
@@ -94,6 +98,7 @@ ${heading("ADD OPTIONS")}
   ${command("--compose-command <frontend>")}   podman or podman-compose
   ${command("--service <name>")}               Compose service (default: web)
   ${command("--health-path </healthz>")}        Loopback health path
+  ${command("--deployment-mode <mode>")}        build or prebuilt
 
 ${detail("Docs: https://shibumistack.dev/server")}`;
 }
@@ -171,7 +176,7 @@ export function parseCliArgs(argv: string[]): CliCommand {
     return { name, appId, serverHostname: values.get("--server-hostname") };
   }
 
-  if (name === "webhook-secret" || name === "caddy-cutover") {
+  if (name === "webhook-secret" || name === "caddy-cutover" || name === "enable-prebuilt") {
     if (args.length !== 1 || args[0].startsWith("--")) fail(`${name} requires an app id`);
     return { name, appId: args[0] };
   }
@@ -200,6 +205,14 @@ export function parseCliArgs(argv: string[]): CliCommand {
     if (!appId || !commit || extra.length > 0) fail("redeploy requires an app id and full commit SHA");
     if (!/^[a-f0-9]{40}$/.test(commit)) fail("redeploy commit must be a full lowercase SHA");
     return { name, appId, commit };
+  }
+
+  if (name === "image-load") {
+    const [appId, commit, bytes, ...extra] = args;
+    if (!appId || !commit || !bytes || extra.length > 0) fail("image-load requires an app id, full commit SHA, and archive byte size");
+    if (!/^[a-f0-9]{40}$/.test(commit)) fail("image-load commit must be a full lowercase SHA");
+    if (!/^\d+$/.test(bytes) || Number(bytes) < 1 || Number(bytes) > 16 * 1024 ** 3) fail("image-load archive size must be between 1 byte and 16 GiB");
+    return { name, appId, commit, archiveBytes: Number(bytes) };
   }
 
   if (name === "status") {
@@ -233,7 +246,10 @@ export function parseCliArgs(argv: string[]): CliCommand {
       "--compose-command",
       "--service",
       "--health-path",
+      "--deployment-mode",
     ]));
+    const deploymentMode = values.get("--deployment-mode");
+    if (deploymentMode !== undefined && deploymentMode !== "build" && deploymentMode !== "prebuilt") fail("--deployment-mode must be build or prebuilt");
     const repositoryValue = values.get("--repository");
     const target = repositoryValue === undefined ? undefined : parseGitHubRepositoryTarget(repositoryValue);
     const repository = target?.repository;
@@ -261,6 +277,7 @@ export function parseCliArgs(argv: string[]): CliCommand {
       composeCommand: composeFrontend === "podman-compose" ? ["podman-compose"] : undefined,
       service: values.get("--service"),
       healthPath: values.get("--health-path"),
+      deploymentMode,
     };
   }
 

@@ -23,6 +23,7 @@
       "healthAttempts": 20,
       "healthIntervalMs": 500,
       "retainedRollbackImages": 1,
+      "deploymentMode": "prebuilt",
       "caddyMode": "managed"
     }
   }

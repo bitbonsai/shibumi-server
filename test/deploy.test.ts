@@ -21,6 +21,7 @@ const app: AppConfig = {
   healthAttempts: 2,
   healthIntervalMs: 10,
   retainedRollbackImages: 1,
+  deploymentMode: "build",
 };
 
 class FakeRunner implements CommandRunner {
@@ -88,6 +89,65 @@ describe("deployment pipeline", () => {
     expect(calls[15]).toEqual(["podman", "image", "prune", "--force"]);
     expect(runner.calls.find(({ args }) => args.includes("up"))?.options?.env).toEqual({ SHIBUMI_PORT: "9100" });
     expect(runner.calls.find(({ args }) => args.at(-1) === "build")?.options?.timeoutMs).toBe(600_000);
+  });
+
+  test("runs an exact prebuilt image without building on the server", async () => {
+    class PrebuiltRunner extends FakeRunner {
+      override async run(command: string, args: string[], options?: CommandOptions): Promise<CommandResult> {
+        if (command === "podman" && args[0] === "image" && args[1] === "inspect") {
+          this.calls.push({ command, args, options });
+          const image = `localhost/shibumi-server/upload/myapp:${commit}`;
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify([{ Os: "linux", Architecture: process.arch === "arm64" ? "arm64" : "amd64", RepoTags: [image] }]),
+            stderr: "",
+          };
+        }
+        return super.run(command, args, options);
+      }
+    }
+    const runner = new PrebuiltRunner();
+    runner.responses = [
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${commit}\n`, stderr: "" },
+    ];
+
+    await deploy("myapp", { ...app, deploymentMode: "prebuilt" }, commit, dependencies(runner));
+
+    expect(runner.calls.some(({ args }) => args.includes("build"))).toBe(false);
+    const testCall = runner.calls.find(({ args }) => args.includes("run"));
+    expect(testCall?.options?.input).toContain(`localhost/shibumi-server/upload/myapp:${commit}`);
+    const start = runner.calls.find(({ args }) => args.includes("up"));
+    expect(start?.args).toContain("--no-build");
+    expect(start?.options?.input).toContain("localhost/shibumi-server/runtime/myapp:current");
+    expect(runner.calls.some(({ command, args }) => command === "podman"
+      && args.slice(0, 4).join(" ") === `image tag localhost/shibumi-server/upload/myapp:${commit} localhost/shibumi-server/runtime/myapp:current`)).toBe(true);
+    expect(runner.calls.some(({ command, args }) => command === "podman"
+      && args.slice(0, 3).join(" ") === `image rm localhost/shibumi-server/upload/myapp:${commit}`)).toBe(true);
+  });
+
+  test("does not start a prebuilt deployment when its exact image is missing", async () => {
+    class MissingImageRunner extends FakeRunner {
+      override async run(command: string, args: string[], options?: CommandOptions): Promise<CommandResult> {
+        if (command === "podman" && args[0] === "image" && args[1] === "inspect") {
+          this.calls.push({ command, args, options });
+          return { exitCode: 1, stdout: "", stderr: "missing" };
+        }
+        return super.run(command, args, options);
+      }
+    }
+    const runner = new MissingImageRunner();
+    runner.responses = [
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: `${commit}\n`, stderr: "" },
+    ];
+
+    await expect(deploy("myapp", { ...app, deploymentMode: "prebuilt" }, commit, dependencies(runner))).rejects.toEqual(
+      new DeploymentError("image", `prebuilt image ${commit} is not loaded. Upload it with bun run ship, then retry.`),
+    );
+    expect(runner.calls.some(({ args }) => args.includes("up"))).toBe(false);
   });
 
   test("always validates Compose and allows app-owned tests to be omitted", async () => {

@@ -5,12 +5,14 @@
 ## Request flow
 
 ```text
-Git push
-  → git host sends HTTPS webhook
+local client verifies clean committed work
+  → Docker builds the server platform image from a Git archive
+  → client uploads the exact commit tag through SSH
+  → Git push causes the git host to send an HTTPS webhook
   → Caddy proxies the webhook path to localhost
   → shibumi-server verifies the signature, repository, and branch
   → shibumi-server fetches the exact commit
-  → Podman validates and builds the application
+  → Podman verifies the preloaded image tag and platform
   → optional app-owned tests run in a temporary container
   → Podman replaces the application container
   → shibumi-server checks the local health endpoint
@@ -21,7 +23,7 @@ The receiver listens on a loopback address. Caddy is the only public HTTP server
 
 ## Trust boundary
 
-A valid webhook authorizes repository code to build and run as the deployment Unix user. Use a dedicated unprivileged account and rootless Podman. Do not give that account access to unrelated applications.
+A valid webhook authorizes repository code or its preloaded image to run as the deployment Unix user. Use a dedicated unprivileged account and rootless Podman. Do not give that account access to unrelated applications.
 
 The receiver never executes command text from the webhook. Repository, branch, checkout, Compose service, optional test command, and port all come from local configuration. Webhook values are compared against that configuration and commands are executed as argument arrays without a shell.
 
@@ -55,9 +57,17 @@ git reset --hard <verified-commit>
 
 The fetched commit must exactly match the signed webhook payload. Runtime data and secrets must live outside the checkout.
 
+## Prebuilt images
+
+The owned ship client refuses dirty work, runs project checks, and creates its Docker build context with `git archive` from exact `HEAD`. Ignored files, untracked files, local credentials, and machine-built `node_modules` do not enter the image context. Git submodules currently fail closed.
+
+Docker Compose builds the image for the platform exported by the server, such as `linux/arm64`. The client saves it under `localhost/shibumi-server/upload/<app-id>:<full-commit>` and streams the archive through the existing SSH connection to `shis image-load`. The server accepts stdin only for a registered prebuilt app, validates the declared archive size against free disk plus the configured floor, removes any older copy of that exact tag, loads with rootless Podman, then verifies the exact tag and server platform. Upload must finish before Git push, so the signed webhook cannot race a missing image.
+
+After the webhook verifies and fetches the same commit, Shibumi validates Compose with a generated image override, runs optional tests against the exact uploaded image, tags it as the app's stable runtime image, and starts with `--no-build`. A failed test never starts it. A failed startup or health check restores the prior runtime image. Successful retention removes the temporary upload tag. Build mode remains available for manual registrations.
+
 ## Resource guards
 
-Before changing the checkout or starting a build, the receiver checks Linux `MemAvailable` and free space on the checkout filesystem. The default per-app floors are 2 GiB of available memory and 4 GiB of disk. If either cannot be measured or is below its configured floor, deployment stops at the `preflight` stage. Put the checkout and rootless Podman storage on the same filesystem; otherwise the disk check does not cover image storage.
+Before changing the checkout or starting deployment work, the receiver checks Linux `MemAvailable` and free space on the checkout filesystem. Build mode defaults to a 2 GiB memory floor. Owned ship setup uses 512 MiB for prebuilt apps. Both default to a 4 GiB disk floor. If either cannot be measured or is below its configured floor, deployment stops at the `preflight` stage. Prebuilt apps can use a lower measured memory floor because the host does not build them. Put the checkout and rootless Podman storage on the same filesystem; otherwise the disk check does not cover image storage.
 
 Compose builds have a configurable deadline, 10 minutes by default. The receiver starts each command in its own process group, sends `SIGKILL` to the build group when it exceeds the deadline, and never proceeds to optional tests or startup. This bounds a stuck build, but a killed build may leave intermediate Podman data for an operator to inspect and prune deliberately.
 
@@ -121,7 +131,7 @@ The first release targets Bun and a systemd user service. `install.sh` is a Bash
 
 Caddy integration is declarative and constrained. New domains get per-site fragments with Zstd and gzip compression, indexing allowed, safe baseline headers, and bounded JSON access logs by default. Existing domains preserve their source block and import only a fixed webhook route unless the operator explicitly chooses rewrite. A root-owned helper accepts schema-validated apply or remove JSON through stdin, computes all paths itself, backs up source files, writes atomically, validates the complete Caddy configuration, reloads without stopping active connections, and restores the backup on failure. Shibumi explains the exact privileged action before `sudo` receives the password directly.
 
-Each app can export `shibumi-server.json`, a versioned client document containing domain, app ID, repository, branch, webhook URL, service, app port, health path, and a confirmed server hostname. It excludes secrets, checkout paths, SSH users, aliases, and credentials. Webhook deployments write mode-restricted status snapshots atomically so a client can poll `status --json` over existing SSH access without a public status endpoint or GitHub deployment token. Repeating the same domain registration validates stored settings, skips checkout and Caddy mutation, preserves the secret, and restarts the service; conflicting settings fail closed. `list` exposes registered domain, app ID, repository, loopback upstream, checkout, and Caddy ownership through branded output. `remove` resolves a domain or app ID, confirms the preserved and removed state, removes the managed Caddy fragment through the constrained helper, then deletes app config, its secret, deployment status, and containers. Checkout, volumes, images, and GitHub webhook remain. Removing the last app stops the service.
+Each app can export `shibumi-server.json`, a versioned client document containing domain, app ID, repository, branch, webhook URL, service, app port, health path, deployment mode, image platform, and a confirmed server hostname. It excludes secrets, checkout paths, SSH users, aliases, and credentials. Webhook deployments write mode-restricted status snapshots atomically so a client can poll `status --json` over existing SSH access without a public status endpoint or GitHub deployment token. Repeating the same domain registration validates stored settings, skips checkout and Caddy mutation, preserves the secret, and restarts the service; conflicting settings fail closed. `list` exposes registered domain, app ID, repository, loopback upstream, checkout, and Caddy ownership through branded output. `remove` resolves a domain or app ID, confirms the preserved and removed state, removes the managed Caddy fragment through the constrained helper, then deletes app config, its secret, deployment status, and containers. Checkout, volumes, images, and GitHub webhook remain. Removing the last app stops the service.
 
 Uninstall requires confirmation, stops and disables the webhook service, then removes its unit, launcher, and installed releases while preserving config and secrets by default. `--yes` is the non-purge automation path. `--purge` uses a stronger confirmation and removes those machine-owned files; `--purge --yes` is the explicit purge automation path. Neither mode removes app checkouts, containers, Caddy routes, or GitHub settings.
 

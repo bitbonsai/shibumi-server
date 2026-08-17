@@ -25,6 +25,7 @@ export interface AppConfig {
   healthAttempts: number;
   healthIntervalMs: number;
   retainedRollbackImages: number;
+  deploymentMode: "build" | "prebuilt";
   caddyMode?: "preserve" | "managed";
 }
 
@@ -185,6 +186,11 @@ export function parseConfig(value: unknown): ServerConfig {
         0,
         1,
       ),
+      deploymentMode: appValue.deploymentMode === undefined || appValue.deploymentMode === "build"
+        ? "build"
+        : appValue.deploymentMode === "prebuilt"
+          ? "prebuilt"
+          : (() => { throw new Error(`apps.${appId}.deploymentMode must be build or prebuilt`); })(),
       caddyMode: appValue.caddyMode === undefined
         ? undefined
         : appValue.caddyMode === "preserve" || appValue.caddyMode === "managed"

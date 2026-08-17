@@ -31,6 +31,8 @@ describe("configuration", () => {
     expect(parsed.apps.myapp.buildTimeoutMs).toBe(600_000);
     expect(parsed.apps.myapp.healthAttempts).toBe(20);
     expect(parsed.apps.myapp.retainedRollbackImages).toBe(1);
+    expect(parsed.apps.myapp.deploymentMode).toBe("build");
+    expect(parseConfig(config({ deploymentMode: "prebuilt" })).apps.myapp.deploymentMode).toBe("prebuilt");
     expect(parseConfig(config({ testCommand: undefined })).apps.myapp.testCommand).toBeUndefined();
     expect(parseConfig(config({ composeCommand: ["podman"] })).apps.myapp.composeCommand).toEqual(["podman", "compose"]);
     expect(parseConfig(config({ composeCommand: ["podman-compose"] })).apps.myapp.composeCommand).toEqual(["podman-compose"]);
@@ -62,5 +64,6 @@ describe("configuration", () => {
   test("rejects unsafe refs and Caddy state", () => {
     expect(() => parseConfig(config({ ref: "refs/heads/../../bad" }))).toThrow("safe refs/heads");
     expect(() => parseConfig(config({ caddyMode: "root" }))).toThrow("preserve or managed");
+    expect(() => parseConfig(config({ deploymentMode: "remote" }))).toThrow("build or prebuilt");
   });
 });

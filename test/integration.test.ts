@@ -73,6 +73,7 @@ integrationTest("deploys a signed webhook through a disposable Git checkout and 
       healthAttempts: 30,
       healthIntervalMs: 250,
       retainedRollbackImages: 2,
+      deploymentMode: "build",
     };
 
     const secret = "integration-secret".repeat(3);

@@ -2,17 +2,19 @@
 
 Small, secure webhook deployments for a VPS running rootless Podman.
 
-> Experimental: release `0.6.12` is being dogfooded.
+> Experimental: release `0.7.2` is being dogfooded.
 
 Installed commands use short name `shis`. Original `shibumi-server` remains a compatible alias. Interactive output uses Clack's native interface with persimmon branding and plain text when color is unavailable.
 
 ## How it works
 
-A signed GitHub push webhook causes `shibumi-server` to fetch the exact commit, validate the Compose config, build it locally, replace the old container with Podman Compose, and check the new container's local health endpoint. Projects can optionally run their own test command before startup. After a healthy deployment, the server keeps two successful images total (the active image and one rollback), then prunes older dangling images. Caddy remains the public HTTPS server.
+The project-owned `bun run ship` client checks committed code, builds the server's Linux architecture image on the developer machine, and uploads it through SSH before pushing Git. A signed GitHub push webhook then causes `shibumi-server` to fetch the exact commit, verify the uploaded image tag and platform, replace the old container with Podman Compose without building, and check the new container's local health endpoint. Manual registrations can retain server-side builds with `deploymentMode: "build"`.
 
 ```text
-GitHub → Caddy → shibumi-server → Git → rootless Podman → health check
+local build → SSH image upload → Git push → signed webhook → verify → rootless Podman → health check
 ```
+
+Projects can optionally run their own test command before startup. After a healthy deployment, the server keeps two successful images total (the active image and one rollback), then prunes older dangling images. Caddy remains the public HTTPS server.
 
 See [docs/architecture.md](docs/architecture.md) for the trust boundary and security model.
 
@@ -42,7 +44,7 @@ Copy [`examples/config.example.json`](examples/config.example.json) to a machine
 
 ## Resource safety
 
-Each deployment checks available host memory and free space on the checkout filesystem before touching Git. Defaults require 2 GiB of available memory and 4 GiB of free disk. Builds are killed after 10 minutes by default. Configure these per app with `minimumFreeMemoryMb`, `minimumFreeDiskMb`, and `buildTimeoutMs`.
+Each deployment checks available host memory and free space on the checkout filesystem before touching Git. Build mode defaults to 2 GiB of available memory; owned ship setup uses 512 MiB for prebuilt apps. Both require 4 GiB of free disk. Server-side builds are killed after 10 minutes by default. Configure these per app with `minimumFreeMemoryMb`, `minimumFreeDiskMb`, and `buildTimeoutMs`. Prebuilt apps skip server builds, so operators can lower their memory floor after measuring startup needs.
 
 The example systemd unit also caps the receiver and its direct build processes at 1.5 GiB of memory, 256 MiB of swap, two CPUs, and 512 tasks. Tune these ceilings for the host, but always leave capacity for SSH, Caddy, and existing apps. App containers run in Podman-managed cgroups and need their own Compose resource limits; see [the architecture guide](docs/architecture.md#resource-guards).
 
@@ -70,7 +72,7 @@ Recommended onboarding starts from your local project root:
 curl -fsSL https://shibumistack.dev/install/ship.sh | sh
 ```
 
-Owned ship setup connects through confirmed SSH, installs or upgrades `shibumi-server` when needed, registers the app, and configures GitHub. If DNS or webhook delivery is pending, setup files remain in the project and setup resumes with `bun run ship:setup`.
+Owned ship setup connects through confirmed SSH, installs or upgrades `shibumi-server` when needed, enables prebuilt deployments, registers the app, and configures GitHub. Normal shipping requires Docker Desktop or compatible Docker Engine locally. If DNS or webhook delivery is pending, setup files remain in the project and setup resumes with `bun run ship:setup`.
 
 Server operators can prepare the host directly by logging in as the deployment user and running:
 
@@ -91,14 +93,15 @@ Interactive app setup retries transient DNS failures, falls back to the server's
 For scripts and unattended setup, pin the bootstrap release and provide every app value explicitly:
 
 ```bash
-bunx shibumi-server@0.6.12 init
+bunx shibumi-server@0.7.2 init
 shis add example.com \
   --repository github:owner/repository \
   --checkout /srv/shibumi/apps/example-com \
-  --port 9100
+  --port 9100 \
+  --deployment-mode prebuilt
 ```
 
-`init` stores the release under `~/.local/share/shibumi-server/releases/0.6.12`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
+`init` stores the release under `~/.local/share/shibumi-server/releases/0.7.2`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. Prebuilt mode accepts only an exact commit-tagged Linux image loaded through `shis image-load`; build mode remains available for manual server builds. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
 
 List or remove registered apps with branded server-side flows:
 

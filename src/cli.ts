@@ -7,11 +7,12 @@ import packageJson from "../package.json";
 import { createClientConfig, readWebhookSecret } from "./client-config";
 import { formatHelp, parseCliArgs } from "./cli-args";
 import { loadConfig, validateSecrets } from "./config";
-import { addApp, initializeInstallation, installationPaths, uninstallInstallation } from "./install";
+import { addApp, enablePrebuiltApp, initializeInstallation, installationPaths, uninstallInstallation } from "./install";
 import { WebhookService } from "./server";
 import { DeploymentStatusStore } from "./status";
 import { DeploymentHistoryStore } from "./history";
 import { DeploymentLogStore } from "./deployment-log";
+import { BunCommandRunner } from "./deploy";
 import { DeploymentQueueStore } from "./queue";
 import { updateToLatest, warnIfUpdateAvailable } from "./update";
 import { SHIP_INSTALL_COMMAND } from "./terminal-ui";
@@ -161,6 +162,15 @@ try {
     requireLinux();
     const { runRemoveApp } = await import("./setup");
     await runRemoveApp(homedir(), command.app, command.yes);
+  } else if (command.name === "enable-prebuilt") {
+    requireLinux();
+    await enablePrebuiltApp(homedir(), command.appId);
+    console.log(`Prebuilt deployments enabled for ${command.appId}.`);
+  } else if (command.name === "image-load") {
+    requireLinux();
+    const { loadPrebuiltImage } = await import("./prebuilt");
+    const image = await loadPrebuiltImage(installationPaths(homedir()).config, command.appId, command.commit, command.archiveBytes, new BunCommandRunner());
+    console.log(`Loaded ${image}.`);
   } else if (command.name === "caddy-cutover") {
     requireLinux();
     const { runCaddyCutover } = await import("./setup");

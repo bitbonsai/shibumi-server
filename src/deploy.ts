@@ -1,6 +1,7 @@
 import { readFile, statfs } from "node:fs/promises";
 import { freemem } from "node:os";
 import { composePath, type AppConfig } from "./config";
+import { inspectPrebuiltImage, runtimeImage, uploadedImage } from "./prebuilt";
 
 const MEBIBYTE = 1024 * 1024;
 
@@ -9,6 +10,8 @@ export interface CommandOptions {
   env?: Record<string, string>;
   capture?: boolean;
   timeoutMs?: number;
+  stdin?: "ignore" | "inherit";
+  input?: string;
   onOutput?(line: string): void | Promise<void>;
 }
 
@@ -75,11 +78,15 @@ export class BunCommandRunner implements CommandRunner {
     const subprocess = Bun.spawn([command, ...args], {
       cwd: options.cwd,
       env: cleanEnvironment(options.env ?? {}),
-      stdin: "ignore",
+      stdin: options.input === undefined ? options.stdin ?? "ignore" : "pipe",
       stdout: pipe ? "pipe" : "inherit",
       stderr: pipe ? "pipe" : "inherit",
       detached: process.platform !== "win32",
     });
+    if (options.input !== undefined) {
+      subprocess.stdin!.write(options.input);
+      subprocess.stdin!.end();
+    }
     const timer = options.timeoutMs === undefined
       ? undefined
       : setTimeout(() => {
@@ -357,6 +364,25 @@ async function restoreRelease(
   }
 }
 
+function composeOverride(service: string, image: string): string {
+  return `services:\n  ${JSON.stringify(service)}:\n    image: ${JSON.stringify(image)}\n`;
+}
+
+function composeInvocation(appId: string, app: AppConfig, image?: string): {
+  executable: string;
+  compose: string[];
+  options: CommandOptions;
+} {
+  const [executable, ...prefix] = app.composeCommand;
+  const compose = [...prefix, "--project-name", app.composeProject, "--file", composePath(app)];
+  const options: CommandOptions = { env: { SHIBUMI_PORT: String(app.hostPort) } };
+  if (image) {
+    compose.push("--file", "-");
+    options.input = composeOverride(app.service, image);
+  }
+  return { executable, compose, options };
+}
+
 export async function rollbackToPreviousImage(
   appId: string,
   app: AppConfig,
@@ -364,9 +390,8 @@ export async function rollbackToPreviousImage(
   onTarget?: (commit: string) => void | Promise<void>,
 ): Promise<string> {
   const startedAt = Date.now();
-  const [composeExecutable, ...composePrefix] = app.composeCommand;
-  const compose = [...composePrefix, "--project-name", app.composeProject, "--file", composePath(app)];
-  const options: CommandOptions = { env: { SHIBUMI_PORT: String(app.hostPort) } };
+  const invocation = composeInvocation(appId, app, app.deploymentMode === "prebuilt" ? runtimeImage(appId) : undefined);
+  const { executable: composeExecutable, compose, options } = invocation;
   await runChecked(dependencies, "config", composeExecutable, [...compose, "config", "--quiet"], options);
   const current = await runningRelease(app, composeExecutable, compose, options, dependencies);
   if (!current) throw new DeploymentError("rollback", "cannot find the running application image");
@@ -450,24 +475,29 @@ export async function deploy(
   }
   await git(["reset", "--hard", commit], "checkout");
 
-  const [composeExecutable, ...composePrefix] = app.composeCommand;
-  const compose = [
-    ...composePrefix,
-    "--project-name",
-    app.composeProject,
-    "--file",
-    composePath(app),
-  ];
-  const options: CommandOptions = { env: { SHIBUMI_PORT: String(app.hostPort) } };
+  let invocation = composeInvocation(appId, app);
+  if (app.deploymentMode === "prebuilt") {
+    await dependencies.onStage?.("image");
+    let uploaded: string;
+    try {
+      uploaded = await inspectPrebuiltImage(dependencies.runner, appId, commit);
+    } catch (error) {
+      throw new DeploymentError("image", `${error instanceof Error ? error.message : String(error)}. Upload it with bun run ship, then retry.`);
+    }
+    invocation = composeInvocation(appId, app, uploaded);
+  }
 
+  let { executable: composeExecutable, compose, options } = invocation;
   await runChecked(dependencies, "config", composeExecutable, [...compose, "config", "--quiet"], options);
-  await runChecked(
-    dependencies,
-    "build",
-    composeExecutable,
-    [...compose, "build"],
-    { ...options, timeoutMs: app.buildTimeoutMs },
-  );
+  if (app.deploymentMode === "build") {
+    await runChecked(
+      dependencies,
+      "build",
+      composeExecutable,
+      [...compose, "build"],
+      { ...options, timeoutMs: app.buildTimeoutMs },
+    );
+  }
   if (app.testCommand) {
     await runChecked(
       dependencies,
@@ -477,9 +507,23 @@ export async function deploy(
       options,
     );
   }
+
   const previous = await runningRelease(app, composeExecutable, compose, options, dependencies);
+  if (app.deploymentMode === "prebuilt") {
+    const uploaded = await inspectPrebuiltImage(dependencies.runner, appId, commit);
+    const runtime = runtimeImage(appId);
+    await runChecked(dependencies, "image", "podman", ["image", "tag", uploaded, runtime], { capture: true });
+    invocation = composeInvocation(appId, app, runtime);
+    ({ executable: composeExecutable, compose, options } = invocation);
+  }
   try {
-    await runChecked(dependencies, "start", composeExecutable, [...compose, "up", "-d", "--remove-orphans", "--force-recreate"], options);
+    await runChecked(
+      dependencies,
+      "start",
+      composeExecutable,
+      [...compose, "up", "-d", ...(app.deploymentMode === "prebuilt" ? ["--no-build"] : []), "--remove-orphans", "--force-recreate"],
+      options,
+    );
     await dependencies.onStage?.("health");
     await waitForHealth(app, dependencies);
   } catch (error) {
@@ -487,6 +531,9 @@ export async function deploy(
     throw error;
   }
   await retainReleaseImages(appId, app, commit, startedAt, composeExecutable, compose, options, dependencies);
+  if (app.deploymentMode === "prebuilt") {
+    await dependencies.runner.run("podman", ["image", "rm", uploadedImage(appId, commit)], { capture: true });
+  }
 
   dependencies.logger.info("deployment succeeded", {
     app: appId,

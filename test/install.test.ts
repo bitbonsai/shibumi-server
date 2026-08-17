@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { addApp, appIdForDomain, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, SystemdUserServiceManager, uninstallInstallation, type CheckoutManager, type ServiceManager } from "../src/install";
+import { addApp, appIdForDomain, enablePrebuiltApp, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, SystemdUserServiceManager, uninstallInstallation, type CheckoutManager, type ServiceManager } from "../src/install";
 import packageJson from "../package.json";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
 
@@ -201,6 +201,20 @@ describe("app registration", () => {
     expect((await stat(paths.config)).mode & 0o777).toBe(0o600);
     expect((await stat(paths.secrets)).mode & 0o777).toBe(0o600);
     expect(services.restarts).toBe(1);
+  });
+
+  test("explicitly enables prebuilt deployment without changing app identity", async () => {
+    const home = await temporaryHome();
+    const { services } = await initialized(home);
+    await addApp(appOptions(home), services, checkouts);
+
+    await enablePrebuiltApp(home, "example-com", services);
+
+    const parsed = JSON.parse(await readFile(installationPaths(home).config, "utf8"));
+    expect(parsed.apps["example-com"].deploymentMode).toBe("prebuilt");
+    expect(parsed.apps["example-com"].minimumFreeMemoryMb).toBe(512);
+    expect(parsed.apps["example-com"].repository).toBe("owner/repository");
+    expect(services.restarts).toBe(2);
   });
 
   test("persists a discovered nested Compose config", async () => {
