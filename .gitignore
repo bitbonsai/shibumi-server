@@ -7,3 +7,5 @@ state.json
 secrets.env
 *.log
 .DS_Store
+.plans/next.md
+.plans/next.prev.md

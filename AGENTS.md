@@ -27,6 +27,7 @@ Use `SHIBUMI_COMPOSE_COMMAND=podman-compose` on hosts with the standalone Compos
 - Compare signatures in constant time and preserve bounded replay protection for accepted `X-GitHub-Delivery` IDs.
 - Match repository and exact branch against machine-local configuration.
 - Accept only full lowercase 40-character commit SHAs.
+- Prebuilt images require exact app ID, repository, commit revision, Git source-tree, tag, and server-platform identity. Resolve source tree independently after webhook fetch; never trust upload labels alone.
 - Never interpolate payload or config values into a shell command; use argument arrays.
 - Keep the HTTP listener and app ports on loopback behind Caddy.
 - Keep webhook secrets, credentials, real machine config, and deployment state out of Git and npm packages.
