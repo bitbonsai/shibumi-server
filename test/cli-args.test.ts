@@ -62,6 +62,8 @@ describe("CLI arguments", () => {
       name: "image-load", appId: "example-com", commit: "a".repeat(40), archiveBytes: 1024,
     });
     expect(parseCliArgs(["enable-prebuilt", "example-com"])).toEqual({ name: "enable-prebuilt", appId: "example-com" });
+    expect(parseCliArgs(["deployment-mode", "example-com", "build"])).toEqual({ name: "deployment-mode", appId: "example-com", mode: "build" });
+    expect(parseCliArgs(["deployment-mode", "example-com", "prebuilt"])).toEqual({ name: "deployment-mode", appId: "example-com", mode: "prebuilt" });
   });
 
   test("parses check and serve config paths", () => {
@@ -163,6 +165,7 @@ describe("CLI arguments", () => {
     expect(() => parseCliArgs(["uninstall", "--purge", "--purge"])).toThrow("only be used once");
     expect(() => parseCliArgs(["check"])).toThrow("--config");
     expect(() => parseCliArgs(["client-config"])).toThrow("app id");
+    expect(() => parseCliArgs(["deployment-mode", "example-com", "remote"])).toThrow("build or prebuilt");
     expect(() => parseCliArgs(["status", "example-com", "--json", "--json"])).toThrow("only be used once");
     expect(() => parseCliArgs(["check", "--config", "a", "--config", "b"])).toThrow("only be used once");
     expect(() => parseCliArgs(["add", "example.com", "--dry-run", "--dry-run"])).toThrow("only be used once");

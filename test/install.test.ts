@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { addApp, appIdForDomain, enablePrebuiltApp, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, SystemdUserServiceManager, uninstallInstallation, type CheckoutManager, type ServiceManager } from "../src/install";
+import { addApp, appIdForDomain, enablePrebuiltApp, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, setDeploymentMode, SystemdUserServiceManager, uninstallInstallation, type CheckoutManager, type ServiceManager } from "../src/install";
 import packageJson from "../package.json";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
 
@@ -203,7 +203,7 @@ describe("app registration", () => {
     expect(services.restarts).toBe(1);
   });
 
-  test("explicitly enables prebuilt deployment without changing app identity", async () => {
+  test("switches deployment mode without changing app identity", async () => {
     const home = await temporaryHome();
     const { services } = await initialized(home);
     await addApp(appOptions(home), services, checkouts);
@@ -214,7 +214,12 @@ describe("app registration", () => {
     expect(parsed.apps["example-com"].deploymentMode).toBe("prebuilt");
     expect(parsed.apps["example-com"].minimumFreeMemoryMb).toBe(512);
     expect(parsed.apps["example-com"].repository).toBe("owner/repository");
-    expect(services.restarts).toBe(2);
+
+    await setDeploymentMode(home, "example-com", "build", services);
+    const built = JSON.parse(await readFile(installationPaths(home).config, "utf8"));
+    expect(built.apps["example-com"].deploymentMode).toBe("build");
+    expect(built.apps["example-com"].minimumFreeMemoryMb).toBe(2_048);
+    expect(services.restarts).toBe(3);
   });
 
   test("persists a discovered nested Compose config", async () => {

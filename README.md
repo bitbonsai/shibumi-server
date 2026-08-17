@@ -136,10 +136,11 @@ shis history example-com
 shis history example-com --json
 shis logs example-com
 shis redeploy example-com <full-sha>
+shis deployment-mode example-com prebuilt
 shis rollback example-com
 ```
 
-`logs` prints the latest deployment log for an app. Each new deployment atomically replaces the previous mode-`0600` log, bounded to 256 KiB.
+`deployment-mode` switches an app between local prebuilt images and server builds, adjusts the corresponding memory floor, and restarts the service. `enable-prebuilt` remains a compatibility alias. `logs` prints the latest deployment log for an app. Each new deployment atomically replaces the previous mode-`0600` log, bounded to 256 KiB.
 
 Rollback restores the one previous successful image retained for the app, recreates the service without building, and verifies health. A successful rollback rotates retention so another rollback can return to the image that was active before it. If rollback startup or health fails, Shibumi restores the current image. Before replacing a running app, every normal deployment also records its current image and restores it when startup or health checks fail.
 

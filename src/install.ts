@@ -457,9 +457,10 @@ export async function addApp(
   return { appId, secretEnvironmentVariable, config: parsed };
 }
 
-export async function enablePrebuiltApp(
+export async function setDeploymentMode(
   home: string,
   appId: string,
+  mode: "build" | "prebuilt",
   services: ServiceManager = new SystemdUserServiceManager(),
 ): Promise<void> {
   const paths = installationPaths(resolve(home));
@@ -472,12 +473,20 @@ export async function enablePrebuiltApp(
     ...root,
     apps: {
       ...apps as Record<string, unknown>,
-      [appId]: { ...app as Record<string, unknown>, deploymentMode: "prebuilt", minimumFreeMemoryMb: 512 },
+      [appId]: { ...app as Record<string, unknown>, deploymentMode: mode, minimumFreeMemoryMb: mode === "prebuilt" ? 512 : 2_048 },
     },
   };
   parseConfig(candidate);
   await atomicWrite(paths.config, `${JSON.stringify(candidate, null, 2)}\n`, 0o600);
   await services.enableAndRestart();
+}
+
+export async function enablePrebuiltApp(
+  home: string,
+  appId: string,
+  services: ServiceManager = new SystemdUserServiceManager(),
+): Promise<void> {
+  await setDeploymentMode(home, appId, "prebuilt", services);
 }
 
 export async function registeredApps(home: string): Promise<RegisteredApp[]> {

@@ -7,7 +7,7 @@ import packageJson from "../package.json";
 import { createClientConfig, readWebhookSecret } from "./client-config";
 import { formatHelp, parseCliArgs } from "./cli-args";
 import { loadConfig, validateSecrets } from "./config";
-import { addApp, enablePrebuiltApp, initializeInstallation, installationPaths, uninstallInstallation } from "./install";
+import { addApp, enablePrebuiltApp, initializeInstallation, installationPaths, setDeploymentMode, uninstallInstallation } from "./install";
 import { WebhookService } from "./server";
 import { DeploymentStatusStore } from "./status";
 import { DeploymentHistoryStore } from "./history";
@@ -166,6 +166,10 @@ try {
     requireLinux();
     await enablePrebuiltApp(homedir(), command.appId);
     console.log(`Prebuilt deployments enabled for ${command.appId}.`);
+  } else if (command.name === "deployment-mode") {
+    requireLinux();
+    await setDeploymentMode(homedir(), command.appId, command.mode);
+    console.log(`${command.mode === "prebuilt" ? "Prebuilt" : "Server build"} deployments enabled for ${command.appId}.`);
   } else if (command.name === "image-load") {
     requireLinux();
     const { loadPrebuiltImage } = await import("./prebuilt");

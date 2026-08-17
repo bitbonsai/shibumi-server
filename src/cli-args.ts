@@ -8,6 +8,7 @@ export type CliCommand =
   | { name: "check" | "serve"; config: string }
   | { name: "client-config"; appId: string; serverHostname?: string }
   | { name: "webhook-secret" | "caddy-cutover" | "enable-prebuilt"; appId: string }
+  | { name: "deployment-mode"; appId: string; mode: "build" | "prebuilt" }
   | { name: "image-load"; appId: string; commit: string; archiveBytes: number }
   | { name: "status"; appId: string; commit?: string; json: boolean }
   | { name: "history"; appId: string; json: boolean }
@@ -83,7 +84,8 @@ ${heading("OPERATIONS")}
   ${command("shis rollback <app-id>")} [--yes]
   ${command("shis redeploy <app-id> <full-sha>")}
   ${command("shis image-load <app-id> <full-sha> <bytes>")} Load prebuilt image from stdin
-  ${command("shis enable-prebuilt <app-id>")}
+  ${command("shis deployment-mode <app-id> <build|prebuilt>")}
+  ${command("shis enable-prebuilt <app-id>")}       Compatibility alias
   ${command("shis caddy-cutover <app-id>")}
   ${command("shis client-config <app-id>")} [--server-hostname <host>]
   ${command("shis webhook-secret <app-id>")}
@@ -179,6 +181,12 @@ export function parseCliArgs(argv: string[]): CliCommand {
   if (name === "webhook-secret" || name === "caddy-cutover" || name === "enable-prebuilt") {
     if (args.length !== 1 || args[0].startsWith("--")) fail(`${name} requires an app id`);
     return { name, appId: args[0] };
+  }
+
+  if (name === "deployment-mode") {
+    const [appId, mode, ...extra] = args;
+    if (!appId || extra.length > 0 || (mode !== "build" && mode !== "prebuilt")) fail("deployment-mode requires an app id and build or prebuilt");
+    return { name, appId, mode };
   }
 
   if (name === "history") {
