@@ -5,8 +5,8 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "shis": "./src/cli.ts",
-    "shibumi-server": "./src/cli.ts"
+    "shis": "bin/shis",
+    "shibumi-server": "bin/shis"
   },
   "exports": "./src/index.ts",
   "scripts": {
@@ -19,6 +19,7 @@
     "postpublish": "bun scripts/sync-website-version.ts"
   },
   "files": [
+    "bin",
     "src",
     "docs",
     "examples",

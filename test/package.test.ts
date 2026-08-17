@@ -8,12 +8,13 @@ test("release version uses a preferred digit sum", () => {
   expect([1, 2, 3, 5, 7, 9]).toContain(sum);
 });
 
-test("publishes short and compatible CLI names", () => {
-  expect(packageJson.bin).toEqual({ shis: "./src/cli.ts", "shibumi-server": "./src/cli.ts" });
+test("publishes short and compatible CLI names", async () => {
+  expect(packageJson.bin).toEqual({ shis: "bin/shis", "shibumi-server": "bin/shis" });
+  expect(await readFile(resolve(import.meta.dir, "../bin/shis"), "utf8")).toContain('import "../src/cli.ts"');
 });
 
 test("published files use an explicit allowlist", () => {
-  expect(packageJson.files).toEqual(expect.arrayContaining(["src", "docs", "examples", "install.sh", "README.md", "LICENSE", "runtime-lock.json"]));
+  expect(packageJson.files).toEqual(expect.arrayContaining(["bin", "src", "docs", "examples", "install.sh", "README.md", "LICENSE", "runtime-lock.json"]));
   expect(packageJson.files).not.toContain("config.json");
   expect(packageJson.files).not.toContain(".env");
 });
