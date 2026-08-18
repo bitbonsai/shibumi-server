@@ -72,7 +72,17 @@ Recommended onboarding starts from your local project root:
 curl -fsSL https://shibumistack.dev/install/ship.sh | sh
 ```
 
-Owned ship setup connects through confirmed SSH, installs or upgrades `shibumi-server` when needed, enables prebuilt deployments, registers the app, and configures GitHub. Normal shipping requires Docker Desktop or compatible Docker Engine locally. If DNS or webhook delivery is pending, setup files remain in the project and setup resumes with `bun ship:setup`.
+Owned ship setup connects through confirmed SSH, installs or upgrades `shibumi-server` when needed, enables prebuilt deployments, registers the app, and configures GitHub. Local prebuilt shipping uses Colima with Docker CLI, Docker Compose, and Buildx. Ship validates these tools before tests or confirmation and offers to remove stale unavailable Docker credential-helper references after saving a mode-`0600` backup. If DNS or webhook delivery is pending, setup files remain in the project and setup resumes with `bun ship:setup`.
+
+Recommended local macOS setup:
+
+```bash
+brew install colima docker docker-compose docker-buildx
+colima start
+docker info
+docker compose version
+docker buildx version
+```
 
 Server operators can prepare the host directly by logging in as the deployment user and running:
 
