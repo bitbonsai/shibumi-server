@@ -1,7 +1,7 @@
 import { readFile, statfs } from "node:fs/promises";
 import { freemem } from "node:os";
 import { composePath, type AppConfig } from "./config";
-import { inspectPrebuiltImage, runtimeImage, uploadedImage } from "./prebuilt";
+import { inspectPrebuiltImageMetadata, runtimeImage, uploadedImage } from "./prebuilt";
 
 const MEBIBYTE = 1024 * 1024;
 
@@ -301,9 +301,24 @@ async function retainReleaseImages(
   }
 }
 
+interface DeployMetadata {
+  commit: string;
+  deployedAt: string;
+}
+
 interface RunningRelease {
   imageId: string;
   imageName: string;
+  metadata?: DeployMetadata;
+}
+
+function metadataFromEnvironment(environment: string[]): DeployMetadata | undefined {
+  const commit = environment.find((value) => value.startsWith("SHIBUMI_COMMIT="))?.slice("SHIBUMI_COMMIT=".length);
+  const deployedAt = environment.find((value) => value.startsWith("SHIBUMI_DEPLOYED_AT="))?.slice("SHIBUMI_DEPLOYED_AT=".length);
+  if (!commit || !/^[a-f0-9]{40}$/.test(commit) || !deployedAt) return undefined;
+  const timestamp = new Date(deployedAt);
+  if (Number.isNaN(timestamp.valueOf()) || timestamp.toISOString() !== deployedAt) return undefined;
+  return { commit, deployedAt };
 }
 
 async function runningRelease(
@@ -329,12 +344,17 @@ async function runningRelease(
     containerId = labeled.exitCode === 0 ? labeled.stdout.trim().split(/\s+/)[0] : undefined;
   }
   if (!containerId) return undefined;
-  const [imageId, imageName] = await Promise.all([
+  const [imageId, config] = await Promise.all([
     dependencies.runner.run("podman", ["container", "inspect", "--format", "{{.Image}}", containerId], { capture: true }),
-    dependencies.runner.run("podman", ["container", "inspect", "--format", "{{.Config.Image}}", containerId], { capture: true }),
+    dependencies.runner.run(
+      "podman",
+      ["container", "inspect", "--format", "{{.Config.Image}}\n{{range .Config.Env}}{{println .}}{{end}}", containerId],
+      { capture: true },
+    ),
   ]);
-  if (imageId.exitCode !== 0 || imageName.exitCode !== 0 || !imageId.stdout.trim() || !imageName.stdout.trim()) return undefined;
-  return { imageId: imageId.stdout.trim(), imageName: imageName.stdout.trim() };
+  const [imageName, ...environment] = config.stdout.trim().split(/\r?\n/);
+  if (imageId.exitCode !== 0 || config.exitCode !== 0 || !imageId.stdout.trim() || !imageName) return undefined;
+  return { imageId: imageId.stdout.trim(), imageName, metadata: metadataFromEnvironment(environment) };
 }
 
 async function restoreRelease(
@@ -356,7 +376,7 @@ async function restoreRelease(
       "restore",
       composeExecutable,
       [...compose, "up", "-d", "--no-build", "--force-recreate", app.service],
-      options,
+      { ...options, input: composeOverride(app.service, release.imageName, release.metadata) },
     );
     await waitForHealth(app, dependencies);
   } catch (error) {
@@ -364,11 +384,15 @@ async function restoreRelease(
   }
 }
 
-function composeOverride(service: string, image: string): string {
-  return `services:\n  ${JSON.stringify(service)}:\n    image: ${JSON.stringify(image)}\n`;
+function composeOverride(service: string, image?: string, metadata?: DeployMetadata): string {
+  const properties = [
+    image && `    image: ${JSON.stringify(image)}`,
+    metadata && `    environment:\n      SHIBUMI_COMMIT: ${JSON.stringify(metadata.commit)}\n      SHIBUMI_DEPLOYED_AT: ${JSON.stringify(metadata.deployedAt)}`,
+  ].filter(Boolean).join("\n");
+  return `services:\n  ${JSON.stringify(service)}:\n${properties}\n`;
 }
 
-function composeInvocation(appId: string, app: AppConfig, image?: string): {
+function composeInvocation(appId: string, app: AppConfig, image?: string, metadata?: DeployMetadata): {
   executable: string;
   compose: string[];
   options: CommandOptions;
@@ -376,9 +400,9 @@ function composeInvocation(appId: string, app: AppConfig, image?: string): {
   const [executable, ...prefix] = app.composeCommand;
   const compose = [...prefix, "--project-name", app.composeProject, "--file", composePath(app)];
   const options: CommandOptions = { env: { SHIBUMI_PORT: String(app.hostPort) } };
-  if (image) {
+  if (image || metadata) {
     compose.push("--file", "-");
-    options.input = composeOverride(app.service, image);
+    options.input = composeOverride(app.service, image, metadata);
   }
   return { executable, compose, options };
 }
@@ -390,8 +414,8 @@ export async function rollbackToPreviousImage(
   onTarget?: (commit: string) => void | Promise<void>,
 ): Promise<string> {
   const startedAt = Date.now();
-  const invocation = composeInvocation(appId, app, app.deploymentMode === "prebuilt" ? runtimeImage(appId) : undefined);
-  const { executable: composeExecutable, compose, options } = invocation;
+  let invocation = composeInvocation(appId, app, app.deploymentMode === "prebuilt" ? runtimeImage(appId) : undefined);
+  let { executable: composeExecutable, compose, options } = invocation;
   await runChecked(dependencies, "config", composeExecutable, [...compose, "config", "--quiet"], options);
   const current = await runningRelease(app, composeExecutable, compose, options, dependencies);
   if (!current) throw new DeploymentError("rollback", "cannot find the running application image");
@@ -433,6 +457,13 @@ export async function rollbackToPreviousImage(
   if (!/^[a-f0-9]{40}$/.test(commit)) throw new DeploymentError("rollback", "retained image commit cannot be resolved");
 
   await onTarget?.(commit);
+  invocation = composeInvocation(
+    appId,
+    app,
+    app.deploymentMode === "prebuilt" ? runtimeImage(appId) : undefined,
+    { commit, deployedAt: new Date(startedAt).toISOString() },
+  );
+  ({ executable: composeExecutable, compose, options } = invocation);
   await dependencies.onStage?.("rollback");
   try {
     await runChecked(dependencies, "rollback", "podman", ["image", "tag", previous.imageId, current.imageName], { capture: true });
@@ -460,6 +491,7 @@ export async function deploy(
   dependencies: DeployDependencies,
 ): Promise<void> {
   const startedAt = Date.now();
+  let metadata: DeployMetadata = { commit, deployedAt: new Date(startedAt).toISOString() };
   await dependencies.onStage?.("preflight");
   await checkResources(app, dependencies);
   const git = (args: string[], stage: string, capture = false) =>
@@ -475,20 +507,21 @@ export async function deploy(
   }
   await git(["reset", "--hard", commit], "checkout");
 
-  let invocation = composeInvocation(appId, app);
+  let invocation = composeInvocation(appId, app, undefined, metadata);
   let sourceTree: string | undefined;
   if (app.deploymentMode === "prebuilt") {
     const tree = await git(["rev-parse", `${commit}^{tree}`], "verify", true);
     sourceTree = tree.stdout.trim().toLowerCase();
     if (!/^[a-f0-9]{40}$/.test(sourceTree)) throw new DeploymentError("verify", "commit source tree cannot be resolved");
     await dependencies.onStage?.("image");
-    let uploaded: string;
+    let uploaded: Awaited<ReturnType<typeof inspectPrebuiltImageMetadata>>;
     try {
-      uploaded = await inspectPrebuiltImage(dependencies.runner, appId, commit, app.repository, sourceTree);
+      uploaded = await inspectPrebuiltImageMetadata(dependencies.runner, appId, commit, app.repository, sourceTree);
     } catch (error) {
       throw new DeploymentError("image", `${error instanceof Error ? error.message : String(error)}. Upload it with bun ship, then retry.`);
     }
-    invocation = composeInvocation(appId, app, uploaded);
+    metadata = { ...metadata, commit: uploaded.revision };
+    invocation = composeInvocation(appId, app, uploaded.image, metadata);
   }
 
   let { executable: composeExecutable, compose, options } = invocation;
@@ -514,10 +547,11 @@ export async function deploy(
 
   const previous = await runningRelease(app, composeExecutable, compose, options, dependencies);
   if (app.deploymentMode === "prebuilt") {
-    const uploaded = await inspectPrebuiltImage(dependencies.runner, appId, commit, app.repository, sourceTree);
+    const uploaded = await inspectPrebuiltImageMetadata(dependencies.runner, appId, commit, app.repository, sourceTree);
     const runtime = runtimeImage(appId);
-    await runChecked(dependencies, "image", "podman", ["image", "tag", uploaded, runtime], { capture: true });
-    invocation = composeInvocation(appId, app, runtime);
+    metadata = { ...metadata, commit: uploaded.revision };
+    await runChecked(dependencies, "image", "podman", ["image", "tag", uploaded.image, runtime], { capture: true });
+    invocation = composeInvocation(appId, app, runtime, metadata);
     ({ executable: composeExecutable, compose, options } = invocation);
   }
   try {

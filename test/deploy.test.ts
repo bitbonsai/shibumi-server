@@ -36,7 +36,9 @@ class FakeRunner implements CommandRunner {
     if (command === "git" && args.at(-1) === `${commit}^{tree}`) return { exitCode: 0, stdout: `${sourceTree}\n`, stderr: "" };
     if (args.includes("ps") && args.includes("--quiet")) return { exitCode: 0, stdout: "container-id\n", stderr: "" };
     if (args[0] === "container" && args[1] === "list") return { exitCode: 0, stdout: "container-id\n", stderr: "" };
-    if (args[0] === "container" && args[1] === "inspect") return { exitCode: 0, stdout: "sha256:image-id\n", stderr: "" };
+    if (args[0] === "container" && args[1] === "inspect") {
+      return { exitCode: 0, stdout: `${args[3] === "{{.Image}}" ? "sha256:image-id" : "localhost/myapp:web"}\n`, stderr: "" };
+    }
     return { exitCode: 0, stdout: "", stderr: "" };
   }
 }
@@ -72,12 +74,12 @@ describe("deployment pipeline", () => {
       ["git", "-C", app.checkout, "fetch", "--prune", "origin", app.ref],
       ["git", "-C", app.checkout, "rev-parse", "FETCH_HEAD"],
       ["git", "-C", app.checkout, "reset", "--hard", commit],
-      ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "config", "--quiet"],
-      ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "build"],
-      ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "run", "--rm", "web", "bun", "test"],
+      ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "--file", "-", "config", "--quiet"],
+      ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "--file", "-", "build"],
+      ["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "--file", "-", "run", "--rm", "web", "bun", "test"],
     ]);
-    expect(calls[7]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "ps", "--quiet", "web"]);
-    expect(calls[10]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "up", "-d", "--remove-orphans", "--force-recreate"]);
+    expect(calls[7]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "--file", "-", "ps", "--quiet", "web"]);
+    expect(calls[10]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "--file", "-", "up", "-d", "--remove-orphans", "--force-recreate"]);
     expect(calls[11]).toEqual([
       "podman", "container", "list",
       "--filter", "label=io.podman.compose.project=myapp",
@@ -89,7 +91,11 @@ describe("deployment pipeline", () => {
     expect(calls[13]?.[4]).toMatch(/^localhost\/shibumi-server\/myapp:release-\d{13}-a{12}$/);
     expect(calls[14]).toEqual(["podman", "image", "list", "--filter", "reference=localhost/shibumi-server/myapp:release-*", "--format", "{{.Tag}}"]);
     expect(calls[15]).toEqual(["podman", "image", "prune", "--force"]);
-    expect(runner.calls.find(({ args }) => args.includes("up"))?.options?.env).toEqual({ SHIBUMI_PORT: "9100" });
+    const start = runner.calls.find(({ args }) => args.includes("up"));
+    expect(start?.options?.env).toEqual({ SHIBUMI_PORT: "9100" });
+    expect(start?.options?.input).toContain(`SHIBUMI_COMMIT: ${JSON.stringify(commit)}`);
+    const deployedAt = /SHIBUMI_DEPLOYED_AT: "([^"]+)"/.exec(start?.options?.input ?? "")?.[1];
+    expect(deployedAt && new Date(deployedAt).toISOString()).toBe(deployedAt);
     expect(runner.calls.find(({ args }) => args.at(-1) === "build")?.options?.timeoutMs).toBe(600_000);
   });
 
@@ -133,6 +139,7 @@ describe("deployment pipeline", () => {
     const start = runner.calls.find(({ args }) => args.includes("up"));
     expect(start?.args).toContain("--no-build");
     expect(start?.options?.input).toContain("localhost/shibumi-server/runtime/myapp:current");
+    expect(start?.options?.input).toContain(`SHIBUMI_COMMIT: ${JSON.stringify(commit)}`);
     expect(runner.calls.some(({ command, args }) => command === "podman"
       && args.slice(0, 4).join(" ") === `image tag localhost/shibumi-server/upload/myapp:${commit} localhost/shibumi-server/runtime/myapp:current`)).toBe(true);
     expect(runner.calls.some(({ command, args }) => command === "podman"
@@ -302,7 +309,13 @@ describe("deployment pipeline", () => {
       override async run(command: string, args: string[], options?: CommandOptions): Promise<CommandResult> {
         if (command === "podman" && args[0] === "container" && args[1] === "inspect") {
           this.calls.push({ command, args, options });
-          return { exitCode: 0, stdout: `${args[3] === "{{.Config.Image}}" ? "localhost/myapp:web" : this.runningImage}\n`, stderr: "" };
+          return {
+            exitCode: 0,
+            stdout: args[3] === "{{.Image}}"
+              ? `${this.runningImage}\n`
+              : `localhost/myapp:web\nSHIBUMI_COMMIT=${commit}\nSHIBUMI_DEPLOYED_AT=2025-01-01T00:00:00.000Z\n`,
+            stderr: "",
+          };
         }
         if (command === "podman" && args[0] === "image" && args[1] === "list") {
           this.calls.push({ command, args, options });
@@ -327,7 +340,9 @@ describe("deployment pipeline", () => {
 
     expect(target).toBe(previousCommit);
     expect(runner.calls.some(({ command, args }) => command === "podman" && args.slice(0, 4).join(" ") === "image tag sha256:previous localhost/myapp:web")).toBe(true);
-    expect(runner.calls.some(({ args }) => args.includes("--no-build") && args.includes("--force-recreate"))).toBe(true);
+    const rollbackStart = runner.calls.find(({ args }) => args.includes("--no-build") && args.includes("--force-recreate"));
+    expect(rollbackStart?.options?.input).toContain(`SHIBUMI_COMMIT: ${JSON.stringify(previousCommit)}`);
+    expect(rollbackStart?.options?.input).not.toContain(`SHIBUMI_COMMIT: ${JSON.stringify(commit)}`);
     expect(runner.calls.some(({ command, args }) => command === "git" && args.includes("fetch"))).toBe(false);
     expect(runner.calls.some(({ args }) => args.includes("build"))).toBe(false);
   });

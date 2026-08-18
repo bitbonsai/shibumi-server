@@ -30,13 +30,18 @@ const REVISION_LABEL = "org.opencontainers.image.revision";
 const SOURCE_LABEL = "org.opencontainers.image.source";
 const TREE_LABEL = "dev.shibumistack.source-tree";
 
-export async function inspectPrebuiltImage(
+export interface PrebuiltImage {
+  image: string;
+  revision: string;
+}
+
+export async function inspectPrebuiltImageMetadata(
   runner: CommandRunner,
   appId: string,
   commit: string,
   repository: string,
   tree?: string,
-): Promise<string> {
+): Promise<PrebuiltImage> {
   const image = uploadedImage(appId, commit);
   const inspected = await runner.run("podman", ["image", "inspect", image], { capture: true });
   if (inspected.exitCode !== 0) throw new Error(`prebuilt image ${commit} is not loaded`);
@@ -58,7 +63,17 @@ export async function inspectPrebuiltImage(
   if (labels[SOURCE_LABEL] !== `https://github.com/${repository}`) throw new Error("prebuilt image source does not match repository");
   if (typeof labels[TREE_LABEL] !== "string" || !COMMIT.test(labels[TREE_LABEL])) throw new Error("prebuilt image source tree is invalid");
   if (tree && labels[TREE_LABEL] !== tree) throw new Error("prebuilt image source tree does not match commit");
-  return image;
+  return { image, revision: labels[REVISION_LABEL] as string };
+}
+
+export async function inspectPrebuiltImage(
+  runner: CommandRunner,
+  appId: string,
+  commit: string,
+  repository: string,
+  tree?: string,
+): Promise<string> {
+  return (await inspectPrebuiltImageMetadata(runner, appId, commit, repository, tree)).image;
 }
 
 export async function loadPrebuiltImage(
