@@ -21,6 +21,10 @@ SHIBUMI_INTEGRATION=1 bun test test/integration.test.ts
 
 Use `SHIBUMI_COMPOSE_COMMAND=podman-compose` on hosts with the standalone Compose frontend.
 
+## Releases
+
+Create and push matching `v${version}` Git tag at release commit before `npm publish`. Postpublish website sync verifies tagged `install.sh`; publishing first uploads package but leaves sync failed.
+
 ## Security invariants
 
 - Reject malformed event, delivery UUID, and signature headers before reading the request body; verify `X-Hub-Signature-256` over the raw body before parsing payload data.
