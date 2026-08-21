@@ -17,6 +17,10 @@ export interface CaddyRemoveRequest {
   domain: string;
 }
 
+export function caddyHelperNeedsInstall(exitCode: number, output: string): boolean {
+  return exitCode !== 0 || output.trim() !== CADDY_HELPER_VERSION;
+}
+
 async function command(args: string[], input?: string, inherit = false): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const child = Bun.spawn(args, {
     stdin: input === undefined ? (inherit ? "inherit" : "ignore") : "pipe",
@@ -45,7 +49,7 @@ export async function applyCaddyWithSudo(request: CaddyApplyRequest | CaddyRemov
   await authorizeCaddySudo();
 
   const version = await command(["sudo", "-n", HELPER, "--version"]);
-  if (version.exitCode !== 0 || version.stdout.trim() !== CADDY_HELPER_VERSION) {
+  if (caddyHelperNeedsInstall(version.exitCode, version.stdout)) {
     const source = join(import.meta.dir, "caddy-helper.ts");
     const install = await command(["sudo", "-n", process.execPath, source, "--install"]);
     if (install.exitCode !== 0) throw new Error(install.stderr.trim() || "cannot install Caddy helper");

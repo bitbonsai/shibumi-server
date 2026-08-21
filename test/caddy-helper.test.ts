@@ -53,6 +53,8 @@ describe("Caddy source changes", () => {
     const changed = refreshManagedUpstream(managed, 9100);
     expect(changed).toBe("handle {\n    reverse_proxy 127.0.0.1:9100 {\n        lb_try_duration 20000ms\n    }\n}\n");
     expect(refreshManagedUpstream(changed, 9100)).toBe(changed);
+    expect(refreshManagedUpstream(changed.replace("20000ms", "5000ms"), 9100)).toBe(changed);
     expect(() => refreshManagedUpstream("reverse_proxy localhost:9100\n", 9100)).toThrow("could not be identified safely");
+    expect(() => refreshManagedUpstream("reverse_proxy 127.0.0.1:9100 {\n    header_up X-Test value\n}\n", 9100)).toThrow("unexpected options");
   });
 });

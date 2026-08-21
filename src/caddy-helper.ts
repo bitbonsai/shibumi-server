@@ -153,8 +153,13 @@ export function refreshManagedUpstream(source: string, appPort: number): string 
   const plain = lines.map((line) => withoutComment(line).trim());
   const existing = plain.findIndex((line) => line === `${target} {`);
   if (existing >= 0) {
-    if (plain[existing + 1] === `lb_try_duration ${APP_RETRY_BUDGET_MS}ms` && plain[existing + 2] === "}") return source;
-    throw new Error("managed Caddy upstream contains unexpected options");
+    if (!/^lb_try_duration \d+ms$/.test(plain[existing + 1] ?? "") || plain[existing + 2] !== "}") {
+      throw new Error("managed Caddy upstream contains unexpected options");
+    }
+    if (plain[existing + 1] === `lb_try_duration ${APP_RETRY_BUDGET_MS}ms`) return source;
+    const indent = /^(\s*)/.exec(lines[existing + 1])?.[1] ?? "";
+    lines[existing + 1] = `${indent}lb_try_duration ${APP_RETRY_BUDGET_MS}ms\n`;
+    return lines.join("");
   }
   const matches = plain.flatMap((line, index) => line === target ? [index] : []);
   if (matches.length !== 1) throw new Error("managed Caddy upstream could not be identified safely");

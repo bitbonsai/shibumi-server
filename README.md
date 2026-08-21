@@ -2,7 +2,7 @@
 
 Small, secure webhook deployments for a VPS running rootless Podman.
 
-> Experimental: release `0.10.1` is being dogfooded.
+> Experimental: release `0.10.2` is being dogfooded.
 
 Installed commands use short name `shis`. Original `shibumi-server` remains a compatible alias. Interactive output uses Clack's native interface with persimmon branding and plain text when color is unavailable.
 
@@ -103,7 +103,7 @@ Interactive app setup retries transient DNS failures, falls back to the server's
 For scripts and unattended setup, pin the bootstrap release and provide every app value explicitly:
 
 ```bash
-bunx shibumi-server@0.10.1 init
+bunx shibumi-server@0.10.2 init
 shis add example.com \
   --repository github:owner/repository \
   --checkout /srv/shibumi/apps/example-com \
@@ -111,7 +111,7 @@ shis add example.com \
   --deployment-mode prebuilt
 ```
 
-`init` stores the release under `~/.local/share/shibumi-server/releases/0.10.1`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. Prebuilt mode accepts only an exact commit-tagged Linux image loaded through `shis image-load`; build mode remains available for manual server builds. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
+`init` stores the release under `~/.local/share/shibumi-server/releases/0.10.2`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. Prebuilt mode accepts only an exact commit-tagged Linux image loaded through `shis image-load`; build mode remains available for manual server builds. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
 
 List or remove registered apps with branded server-side flows:
 
