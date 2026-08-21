@@ -3,6 +3,11 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
+if (process.env.npm_config_dry_run === "true") {
+  console.log("Dry run: website version sync skipped.");
+  process.exit(0);
+}
+
 const website = resolve(import.meta.dir, "..", "..", "shibumistack.dev");
 const { version } = await import("../package.json");
 if (!existsSync(resolve(website, "scripts", "sync-server-version.ts"))) {
