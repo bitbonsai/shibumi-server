@@ -1,8 +1,7 @@
 import { join } from "node:path";
-import type { CaddySiteOptions } from "./caddy";
+import { CADDY_HELPER_VERSION, type CaddySiteOptions } from "./caddy";
 
 const HELPER = "/usr/local/sbin/shibumi-caddy-helper";
-const HELPER_VERSION = "3";
 
 export interface CaddyApplyRequest {
   version: 1;
@@ -46,7 +45,7 @@ export async function applyCaddyWithSudo(request: CaddyApplyRequest | CaddyRemov
   await authorizeCaddySudo();
 
   const version = await command(["sudo", "-n", HELPER, "--version"]);
-  if (version.exitCode !== 0 || version.stdout.trim() !== HELPER_VERSION) {
+  if (version.exitCode !== 0 || version.stdout.trim() !== CADDY_HELPER_VERSION) {
     const source = join(import.meta.dir, "caddy-helper.ts");
     const install = await command(["sudo", "-n", process.execPath, source, "--install"]);
     if (install.exitCode !== 0) throw new Error(install.stderr.trim() || "cannot install Caddy helper");

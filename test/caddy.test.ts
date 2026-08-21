@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { detectCaddySite, renderCaddyManagedSnippet, renderCaddySite, renderCaddyWebhookSnippet } from "../src/caddy";
+import { APP_RETRY_BUDGET_MS, CADDY_HELPER_VERSION, detectCaddySite, renderCaddyManagedSnippet, renderCaddySite, renderCaddyWebhookSnippet } from "../src/caddy";
 
 describe("Caddy integration", () => {
+  test("couples root helper version to retry budget", () => {
+    expect(CADDY_HELPER_VERSION).toEndWith(`:${APP_RETRY_BUDGET_MS}`);
+  });
+
   test("renders constrained recommended site configuration", () => {
     const config = renderCaddySite({
       domain: "example.com",

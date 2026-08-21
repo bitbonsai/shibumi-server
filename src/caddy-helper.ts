@@ -2,9 +2,7 @@
 
 import { cp, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { APP_RETRY_BUDGET_MS, renderCaddyManagedSnippet, renderCaddySite, renderCaddyWebhookSnippet, type CaddySiteOptions } from "./caddy";
-
-const HELPER_VERSION = 3;
+import { APP_RETRY_BUDGET_MS, CADDY_HELPER_VERSION, renderCaddyManagedSnippet, renderCaddySite, renderCaddyWebhookSnippet, type CaddySiteOptions } from "./caddy";
 const MAIN_CONFIG = "/etc/caddy/Caddyfile";
 const SITE_DIRECTORY = "/etc/caddy/sites.d";
 const BACKUP_DIRECTORY = "/var/lib/shibumi-server/caddy-backups";
@@ -311,7 +309,7 @@ async function apply(request: ApplyRequest): Promise<void> {
 if (import.meta.main) {
   try {
     const argument = process.argv[2];
-    if (argument === "--version") console.log(HELPER_VERSION);
+    if (argument === "--version") console.log(CADDY_HELPER_VERSION);
     else if (argument === "--install") await install();
     else if (!argument) {
       const input = await new Response(Bun.stdin.stream()).text();
