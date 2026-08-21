@@ -2,12 +2,12 @@ import { join } from "node:path";
 import type { CaddySiteOptions } from "./caddy";
 
 const HELPER = "/usr/local/sbin/shibumi-caddy-helper";
-const HELPER_VERSION = "2";
+const HELPER_VERSION = "3";
 
 export interface CaddyApplyRequest {
   version: 1;
   action: "apply";
-  mode: "new" | "preserve" | "rewrite" | "cutover";
+  mode: "new" | "preserve" | "rewrite" | "cutover" | "refresh";
   site: CaddySiteOptions;
 }
 

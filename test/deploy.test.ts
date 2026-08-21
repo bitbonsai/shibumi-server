@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AppConfig } from "../src/config";
-import { BunCommandRunner, deploy, DeploymentError, rollbackToPreviousImage, type CommandOptions, type CommandResult, type CommandRunner, type DeployDependencies, type Fetcher, type ResourceAvailability } from "../src/deploy";
+import { BunCommandRunner, deploy, DeploymentError, retryBudgetSummary, rollbackToPreviousImage, type CommandOptions, type CommandResult, type CommandRunner, type DeployDependencies, type Fetcher, type ResourceAvailability } from "../src/deploy";
 
 const commit = "a".repeat(40);
 const sourceTree = "b".repeat(40);
@@ -66,8 +66,14 @@ describe("deployment pipeline", () => {
       { exitCode: 0, stdout: `${commit}\n`, stderr: "" },
     ];
 
-    await deploy("myapp", app, commit, dependencies(runner));
+    const output: string[] = [];
+    const deps = dependencies(runner);
+    deps.onOutput = async (stage, line) => { output.push(`${stage}: ${line}`); };
+    await deploy("myapp", app, commit, deps);
 
+    expect(output).toHaveLength(1);
+    expect(output[0]).toMatch(/^health: Replacement healthy in \d+ms; Caddy retry budget 5000ms; headroom \d+ms$/);
+    expect(retryBudgetSummary("Replacement healthy", 5_250)).toBe("Replacement healthy in 5250ms; Caddy retry budget 5000ms; exceeded by 250ms");
     const calls = runner.calls.map(({ command, args }) => [command, ...args]);
     expect(calls.slice(0, 7)).toEqual([
       ["git", "-C", app.checkout, "status", "--porcelain"],

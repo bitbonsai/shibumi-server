@@ -8,6 +8,7 @@ describe("CLI arguments", () => {
     expect(formatHelp(true)).toContain("\x1b[38;5;208m渋み");
     expect(formatHelp()).toContain("shis list");
     expect(formatHelp()).toContain("shis remove <domain|app-id>");
+    expect(formatHelp()).toContain("shis caddy-refresh <app-id>");
   });
 
   test("parses help, version, and interactive setup", () => {
@@ -42,6 +43,7 @@ describe("CLI arguments", () => {
     });
     expect(parseCliArgs(["webhook-secret", "example-com"])).toEqual({ name: "webhook-secret", appId: "example-com" });
     expect(parseCliArgs(["caddy-cutover", "example-com"])).toEqual({ name: "caddy-cutover", appId: "example-com" });
+    expect(parseCliArgs(["caddy-refresh", "example-com"])).toEqual({ name: "caddy-refresh", appId: "example-com" });
     expect(parseCliArgs(["status", "example-com", "--commit", "a".repeat(40), "--json"])).toEqual({
       name: "status",
       appId: "example-com",

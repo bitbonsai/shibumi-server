@@ -2,9 +2,9 @@
 
 import { cp, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { renderCaddyManagedSnippet, renderCaddySite, renderCaddyWebhookSnippet, type CaddySiteOptions } from "./caddy";
+import { APP_RETRY_BUDGET_MS, renderCaddyManagedSnippet, renderCaddySite, renderCaddyWebhookSnippet, type CaddySiteOptions } from "./caddy";
 
-const HELPER_VERSION = 2;
+const HELPER_VERSION = 3;
 const MAIN_CONFIG = "/etc/caddy/Caddyfile";
 const SITE_DIRECTORY = "/etc/caddy/sites.d";
 const BACKUP_DIRECTORY = "/var/lib/shibumi-server/caddy-backups";
@@ -17,7 +17,7 @@ const GLOBAL_IMPORT = `import ${SITE_DIRECTORY}/*.caddy`;
 interface ApplyRequest {
   version: 1;
   action: "apply";
-  mode: "new" | "preserve" | "rewrite" | "cutover";
+  mode: "new" | "preserve" | "rewrite" | "cutover" | "refresh";
   site: CaddySiteOptions;
 }
 
@@ -137,7 +137,7 @@ function parseRequest(value: unknown): HelperRequest {
     return request as unknown as RemoveRequest;
   }
   exactKeys(request, ["version", "action", "mode", "site"], "request");
-  if (request.version !== 1 || request.action !== "apply" || !["new", "preserve", "rewrite", "cutover"].includes(String(request.mode))) {
+  if (request.version !== 1 || request.action !== "apply" || !["new", "preserve", "rewrite", "cutover", "refresh"].includes(String(request.mode))) {
     throw new Error("unsupported Caddy helper request");
   }
   if (!request.site || typeof request.site !== "object" || Array.isArray(request.site)) throw new Error("site must be an object");
@@ -146,6 +146,24 @@ function parseRequest(value: unknown): HelperRequest {
     "logRollSizeMb", "logRollKeep",
   ], "site");
   return request as unknown as ApplyRequest;
+}
+
+export function refreshManagedUpstream(source: string, appPort: number): string {
+  if (!Number.isInteger(appPort) || appPort < 1024 || appPort > 65_535) throw new Error("invalid Caddy app port");
+  const target = `reverse_proxy 127.0.0.1:${appPort}`;
+  const lines = source.split(/(?<=\n)/);
+  const plain = lines.map((line) => withoutComment(line).trim());
+  const existing = plain.findIndex((line) => line === `${target} {`);
+  if (existing >= 0) {
+    if (plain[existing + 1] === `lb_try_duration ${APP_RETRY_BUDGET_MS}ms` && plain[existing + 2] === "}") return source;
+    throw new Error("managed Caddy upstream contains unexpected options");
+  }
+  const matches = plain.flatMap((line, index) => line === target ? [index] : []);
+  if (matches.length !== 1) throw new Error("managed Caddy upstream could not be identified safely");
+  const index = matches[0];
+  const indent = /^(\s*)/.exec(lines[index])?.[1] ?? "";
+  lines[index] = `${indent}${target} {\n${indent}    lb_try_duration ${APP_RETRY_BUDGET_MS}ms\n${indent}}\n`;
+  return lines.join("");
 }
 
 async function ensureLogFile(appId: string): Promise<void> {
@@ -254,7 +272,14 @@ async function apply(request: ApplyRequest): Promise<void> {
     if (originalRoute !== undefined) await writeFile(join(backup, `${request.site.appId}.routes`), originalRoute, { mode: 0o600 });
 
     let nextMain = originalMain;
-    if (request.mode === "preserve" || request.mode === "cutover") {
+    if (request.mode === "refresh") {
+      const managed = [
+        originalSite === undefined ? undefined : { path: sitePath, source: originalSite },
+        originalRoute === undefined ? undefined : { path: routePath, source: originalRoute },
+      ].filter((value): value is { path: string; source: string } => value !== undefined);
+      if (managed.length !== 1) throw new Error("managed Caddy fragment could not be identified safely");
+      await atomicWrite(managed[0].path, refreshManagedUpstream(managed[0].source, request.site.appPort));
+    } else if (request.mode === "preserve" || request.mode === "cutover") {
       nextMain = preserveSite(originalMain, request.site.domain, routePath);
       await atomicWrite(routePath, request.mode === "cutover"
         ? renderCaddyManagedSnippet(request.site.appId, request.site.webhookPort, request.site.appPort)
@@ -266,7 +291,7 @@ async function apply(request: ApplyRequest): Promise<void> {
       await atomicWrite(sitePath, renderCaddySite(request.site));
     }
     if (nextMain !== originalMain) await atomicWrite(MAIN_CONFIG, nextMain);
-    if (request.mode !== "preserve" && request.mode !== "cutover" && (request.site.logs ?? true)) await ensureLogFile(request.site.appId);
+    if (!["preserve", "cutover", "refresh"].includes(request.mode) && (request.site.logs ?? true)) await ensureLogFile(request.site.appId);
     await runCaddy(["validate", "--config", MAIN_CONFIG, "--adapter", "caddyfile"]);
     await runCaddy(["reload", "--config", MAIN_CONFIG, "--adapter", "caddyfile"]);
     console.log(JSON.stringify({ ok: true, mode: request.mode, domain: request.site.domain, backup }));

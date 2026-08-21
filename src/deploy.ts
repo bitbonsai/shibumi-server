@@ -1,5 +1,6 @@
 import { readFile, statfs } from "node:fs/promises";
 import { freemem } from "node:os";
+import { APP_RETRY_BUDGET_MS } from "./caddy";
 import { composePath, type AppConfig } from "./config";
 import { inspectPrebuiltImageMetadata, runtimeImage, uploadedImage } from "./prebuilt";
 
@@ -60,6 +61,14 @@ export class DeploymentError extends Error {
     super(message);
     this.name = "DeploymentError";
   }
+}
+
+export function retryBudgetSummary(action: string, readinessMs: number, budgetMs = APP_RETRY_BUDGET_MS): string {
+  if (!action || !Number.isInteger(readinessMs) || readinessMs < 0 || !Number.isInteger(budgetMs) || budgetMs < 1) {
+    throw new Error("invalid retry budget measurement");
+  }
+  const difference = Math.abs(budgetMs - readinessMs);
+  return `${action} in ${readinessMs}ms; Caddy retry budget ${budgetMs}ms; ${readinessMs <= budgetMs ? `headroom ${difference}ms` : `exceeded by ${difference}ms`}`;
 }
 
 function cleanEnvironment(extra: Record<string, string>): Record<string, string> {
@@ -465,6 +474,7 @@ export async function rollbackToPreviousImage(
   );
   ({ executable: composeExecutable, compose, options } = invocation);
   await dependencies.onStage?.("rollback");
+  const replacementStartedAt = Date.now();
   try {
     await runChecked(dependencies, "rollback", "podman", ["image", "tag", previous.imageId, current.imageName], { capture: true });
     await runChecked(
@@ -476,8 +486,10 @@ export async function rollbackToPreviousImage(
     );
     await dependencies.onStage?.("health");
     await waitForHealth(app, dependencies);
+    await dependencies.onOutput?.("health", retryBudgetSummary("Rollback healthy", Date.now() - replacementStartedAt));
   } catch (error) {
     await restoreRelease(app, current, composeExecutable, compose, options, dependencies);
+    await dependencies.onOutput?.("restore", retryBudgetSummary("Previous release restored", Date.now() - replacementStartedAt));
     throw error;
   }
   await retainReleaseImages(appId, app, commit, startedAt, composeExecutable, compose, options, dependencies);
@@ -554,6 +566,7 @@ export async function deploy(
     invocation = composeInvocation(appId, app, runtime, metadata);
     ({ executable: composeExecutable, compose, options } = invocation);
   }
+  const replacementStartedAt = Date.now();
   try {
     await runChecked(
       dependencies,
@@ -564,8 +577,10 @@ export async function deploy(
     );
     await dependencies.onStage?.("health");
     await waitForHealth(app, dependencies);
+    await dependencies.onOutput?.("health", retryBudgetSummary("Replacement healthy", Date.now() - replacementStartedAt));
   } catch (error) {
     await restoreRelease(app, previous, composeExecutable, compose, options, dependencies);
+    if (previous) await dependencies.onOutput?.("restore", retryBudgetSummary("Previous release restored", Date.now() - replacementStartedAt));
     throw error;
   }
   await retainReleaseImages(appId, app, commit, startedAt, composeExecutable, compose, options, dependencies);

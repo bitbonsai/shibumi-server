@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { findSiteBlock, preserveSite, removeRouteImport, rewriteSite } from "../src/caddy-helper";
+import { findSiteBlock, preserveSite, refreshManagedUpstream, removeRouteImport, rewriteSite } from "../src/caddy-helper";
 
 const source = `{
     email admin@example.com
@@ -46,5 +46,13 @@ describe("Caddy source changes", () => {
     expect(changed).not.toContain("example.com {\n    encode gzip");
     expect(changed).toContain("other.example.com");
     expect(changed).toContain("import /etc/caddy/sites.d/*.caddy");
+  });
+
+  test("adds retry budget only to exact managed app upstream", () => {
+    const managed = "handle {\n    reverse_proxy 127.0.0.1:9100\n}\n";
+    const changed = refreshManagedUpstream(managed, 9100);
+    expect(changed).toBe("handle {\n    reverse_proxy 127.0.0.1:9100 {\n        lb_try_duration 5000ms\n    }\n}\n");
+    expect(refreshManagedUpstream(changed, 9100)).toBe(changed);
+    expect(() => refreshManagedUpstream("reverse_proxy localhost:9100\n", 9100)).toThrow("could not be identified safely");
   });
 });

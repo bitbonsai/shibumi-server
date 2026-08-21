@@ -7,7 +7,7 @@ export type CliCommand =
   | { name: "remove"; app: string; yes: boolean }
   | { name: "check" | "serve"; config: string }
   | { name: "client-config"; appId: string; serverHostname?: string }
-  | { name: "webhook-secret" | "caddy-cutover" | "enable-prebuilt"; appId: string }
+  | { name: "webhook-secret" | "caddy-cutover" | "caddy-refresh" | "enable-prebuilt"; appId: string }
   | { name: "deployment-mode"; appId: string; mode: "build" | "prebuilt" }
   | { name: "image-load"; appId: string; commit: string; archiveBytes: number }
   | { name: "status"; appId: string; commit?: string; json: boolean }
@@ -87,6 +87,7 @@ ${heading("OPERATIONS")}
   ${command("shis deployment-mode <app-id> <build|prebuilt>")}
   ${command("shis enable-prebuilt <app-id>")}       Compatibility alias
   ${command("shis caddy-cutover <app-id>")}
+  ${command("shis caddy-refresh <app-id>")}          Add managed retry budget
   ${command("shis client-config <app-id>")} [--server-hostname <host>]
   ${command("shis webhook-secret <app-id>")}
   ${command("shis check --config <path>")}
@@ -178,7 +179,7 @@ export function parseCliArgs(argv: string[]): CliCommand {
     return { name, appId, serverHostname: values.get("--server-hostname") };
   }
 
-  if (name === "webhook-secret" || name === "caddy-cutover" || name === "enable-prebuilt") {
+  if (name === "webhook-secret" || name === "caddy-cutover" || name === "caddy-refresh" || name === "enable-prebuilt") {
     if (args.length !== 1 || args[0].startsWith("--")) fail(`${name} requires an app id`);
     return { name, appId: args[0] };
   }

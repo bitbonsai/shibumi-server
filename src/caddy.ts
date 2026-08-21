@@ -28,6 +28,7 @@ export interface DetectedCaddySite {
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const APP_ID = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+export const APP_RETRY_BUDGET_MS = 5_000;
 
 function validate(options: CaddySiteOptions): void {
   if (!DOMAIN.test(options.domain)) throw new Error("invalid Caddy domain");
@@ -57,7 +58,9 @@ function siteBody(options: CaddySiteOptions): string[] {
     "    }",
     "",
     "    handle {",
-    `        reverse_proxy 127.0.0.1:${options.appPort}`,
+    `        reverse_proxy 127.0.0.1:${options.appPort} {`,
+    `            lb_try_duration ${APP_RETRY_BUDGET_MS}ms`,
+    "        }",
     "    }",
   ];
   if (compression !== "off") {
@@ -120,7 +123,7 @@ export function renderCaddyWebhookSnippet(appId: string, webhookPort: number): s
 export function renderCaddyManagedSnippet(appId: string, webhookPort: number, appPort: number): string {
   const webhook = renderCaddyWebhookSnippet(appId, webhookPort);
   if (!Number.isInteger(appPort) || appPort < 1024 || appPort > 65_535 || appPort === webhookPort) throw new Error("invalid Caddy app port");
-  return `${webhook}\nhandle {\n    reverse_proxy 127.0.0.1:${appPort}\n}\n`;
+  return `${webhook}\nhandle {\n    reverse_proxy 127.0.0.1:${appPort} {\n        lb_try_duration ${APP_RETRY_BUDGET_MS}ms\n    }\n}\n`;
 }
 
 function walk(value: unknown, visit: (value: Record<string, unknown>) => void): void {

@@ -179,6 +179,10 @@ try {
     requireLinux();
     const { runCaddyCutover } = await import("./setup");
     await runCaddyCutover(homedir(), command.appId);
+  } else if (command.name === "caddy-refresh") {
+    requireLinux();
+    const { runCaddyRefresh } = await import("./setup");
+    await runCaddyRefresh(homedir(), command.appId);
   } else if (command.name === "client-config") {
     const paths = installationPaths(homedir());
     console.log(JSON.stringify(await createClientConfig(

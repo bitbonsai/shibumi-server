@@ -14,7 +14,8 @@ describe("Caddy integration", () => {
     expect(config).toContain("www.example.com {\n    redir https://example.com{uri} permanent");
     expect(config).toContain("path /hooks/github/example-com");
     expect(config).toContain("reverse_proxy 127.0.0.1:8787");
-    expect(config).toContain("reverse_proxy 127.0.0.1:9100");
+    expect(config).toContain("reverse_proxy 127.0.0.1:9100 {");
+    expect(config).toContain("lb_try_duration 5000ms");
     expect(config).toContain("encode zstd gzip");
     expect(config).toContain("X-Content-Type-Options");
     expect(config).toContain("output file /var/log/caddy/example-com.log");
@@ -56,7 +57,7 @@ describe("Caddy integration", () => {
       "@shibumi_webhook path /hooks/github/example-com\nhandle @shibumi_webhook {\n    reverse_proxy 127.0.0.1:8787\n}\n",
     );
     expect(renderCaddyManagedSnippet("example-com", 8787, 9100)).toContain(
-      "handle {\n    reverse_proxy 127.0.0.1:9100",
+      "handle {\n    reverse_proxy 127.0.0.1:9100 {\n        lb_try_duration 5000ms",
     );
   });
 

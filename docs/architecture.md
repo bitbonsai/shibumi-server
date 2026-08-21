@@ -113,7 +113,9 @@ services:
       - "127.0.0.1:${SHIBUMI_PORT}:3000"
 ```
 
-Caddy maps the public domain to that port. Other Compose services remain private on the application network. Ports are operational configuration, not secrets, but real machine inventory does not belong in the public repository.
+Caddy maps the public domain to that port. Managed app proxies use a five-second `lb_try_duration`, so requests wait and retry when Compose briefly releases the loopback port during replacement. This bridges normal restart gaps without running two application containers. Existing in-flight requests and long-lived connections can still fail, and restarts exceeding the budget return an upstream error.
+
+Each successful deployment log records elapsed time from replacement start until health passes, plus remaining or exceeded retry budget. This readiness time is a conservative upper bound for listener downtime. Read latest measurement with `shis logs <app-id>`; logs remain mode `0600` and bounded to 256 KiB. `shis caddy-refresh <app-id>` adds retry budget to an existing managed fragment through constrained helper, preserving all other Caddy settings. Other Compose services remain private on the application network. Ports are operational configuration, not secrets, but real machine inventory does not belong in the public repository.
 
 HMAC authentication prevents forged hooks from authorizing a deployment; it does not absorb volumetric traffic. Reject abuse at Caddy, the firewall, or an upstream provider before it reaches Bun. An optional source-IP allowlist must be generated from GitHub's current `hooks` CIDRs at `https://api.github.com/meta` and updated automatically. Do not copy a static range into the project and forget it, and do not trust public `X-Forwarded-For` values unless the listener remains loopback-only behind a correctly configured proxy.
 

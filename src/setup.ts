@@ -10,7 +10,7 @@ import { DeploymentHistoryStore } from "./history";
 import { DeploymentLogStore } from "./deployment-log";
 import { DeploymentStatusStore } from "./status";
 import { checkDomainDns, detectPublicAddresses } from "./domain";
-import { detectCaddySite, type CaddySiteOptions, type Compression, type HeaderProfile, type Indexing } from "./caddy";
+import { APP_RETRY_BUDGET_MS, detectCaddySite, type CaddySiteOptions, type Compression, type HeaderProfile, type Indexing } from "./caddy";
 import { applyCaddyWithSudo, authorizeCaddySudo, type CaddyApplyRequest } from "./caddy-sudo";
 import { addApp, appIdForDomain, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, type AddAppOptions } from "./install";
 import { parseGitHubRepositoryTarget } from "./repository";
@@ -609,6 +609,33 @@ export async function runCaddyCutover(home: string, appId: string): Promise<void
   });
   await markCaddyManaged(home, appId);
   outro(`Caddy now routes ${app.domain} to 127.0.0.1:${app.hostPort}.`);
+}
+
+export async function runCaddyRefresh(home: string, appId: string): Promise<void> {
+  intro(brand());
+  const config = await loadConfig(installationPaths(home).config);
+  const app = config.apps[appId];
+  if (!app) throw new Error(`unknown app: ${appId}\n\nNext: run shis list and retry with a registered app ID.`);
+  if (!app.domain) throw new Error(`app ${appId} has no domain\n\nNext: register its domain before refreshing Caddy.`);
+  if (app.caddyMode === "preserve") throw new Error(`Caddy cutover is still pending for ${app.domain}.\n\nNext: run shis caddy-cutover ${appId}.`);
+  if (app.caddyMode !== "managed") throw new Error(`Caddy is not managed for ${app.domain}.\n\nNext: update its reverse_proxy manually or register it with managed Caddy.`);
+  const accepted = await confirm({
+    message: `Refresh managed Caddy route for ${app.domain}? sudo will validate and reload Caddy.`,
+    initialValue: true,
+  });
+  if (cancelled(accepted) || !accepted) return stopSetup();
+  await applyCaddyWithSudo({
+    version: 1,
+    action: "apply",
+    mode: "refresh",
+    site: {
+      domain: app.domain,
+      appId,
+      appPort: app.hostPort,
+      webhookPort: config.listen.port,
+    },
+  });
+  outro(`Caddy retries ${app.domain} upstream for ${APP_RETRY_BUDGET_MS / 1_000} seconds during container replacement.`);
 }
 
 export async function runInteractiveAdd(options: { home: string; yes?: boolean } & Partial<SetupAnswers>): Promise<void> {
