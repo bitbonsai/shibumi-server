@@ -441,6 +441,23 @@ export async function runInteractiveSetup(options: {
   ].join("\n"));
 }
 
+type HealthFetcher = (url: string, init: RequestInit) => Promise<Response>;
+
+export async function checkAppHealth(
+  healthUrl: string,
+  timeoutMs: number,
+  fetcher: HealthFetcher = fetch,
+): Promise<{ healthy: boolean; detail: string }> {
+  try {
+    const response = await fetcher(healthUrl, { signal: AbortSignal.timeout(timeoutMs) });
+    return response.ok
+      ? { healthy: true, detail: `healthy (HTTP ${response.status})` }
+      : { healthy: false, detail: `unhealthy (HTTP ${response.status})` };
+  } catch {
+    return { healthy: false, detail: "unreachable" };
+  }
+}
+
 export async function runListApps(home: string): Promise<void> {
   intro(brand());
   const apps = await registeredApps(home);
@@ -448,14 +465,20 @@ export async function runListApps(home: string): Promise<void> {
     outro(`No apps registered. From your local project root, run:\n${SHIP_INSTALL_COMMAND}`);
     return;
   }
-  for (const app of apps) {
-    log.info([
+  const results = await Promise.all(apps.map(async (app) => ({
+    app,
+    health: await checkAppHealth(app.healthUrl, Math.min(app.healthIntervalMs * 2, 5_000)),
+  })));
+  for (const { app, health } of results) {
+    const summary = [
       `${app.domain}  (${app.appId})`,
+      `Health      ${health.detail}`,
       `Repository  github:${app.repository}`,
       `Upstream    127.0.0.1:${app.hostPort}`,
       `Checkout    ${app.checkout}`,
       `Caddy       ${app.caddyMode ?? "unmanaged"}`,
-    ].join("\n"));
+    ].join("\n");
+    health.healthy ? log.success(summary) : log.error(summary);
   }
   outro(`${apps.length} app${apps.length === 1 ? "" : "s"} registered`);
 }

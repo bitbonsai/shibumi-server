@@ -60,6 +60,8 @@ export interface RegisteredApp {
   repository: string;
   checkout: string;
   hostPort: number;
+  healthUrl: string;
+  healthIntervalMs: number;
   caddyMode?: "preserve" | "managed";
 }
 
@@ -502,6 +504,8 @@ export async function registeredApps(home: string): Promise<RegisteredApp[]> {
     repository: app.repository,
     checkout: app.checkout,
     hostPort: app.hostPort,
+    healthUrl: app.healthUrl,
+    healthIntervalMs: app.healthIntervalMs,
     caddyMode: app.caddyMode,
   })).sort((left, right) => left.domain.localeCompare(right.domain));
 }
@@ -524,6 +528,8 @@ export async function removeApp(
     repository: app.repository,
     checkout: app.checkout,
     hostPort: app.hostPort,
+    healthUrl: app.healthUrl,
+    healthIntervalMs: app.healthIntervalMs,
     caddyMode: app.caddyMode,
   };
 

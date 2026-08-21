@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
-import { defaultCheckout, findCommand, formatReadySummary, mergeSetupAnswers, nextAvailablePort, registrationOutcome, resolveComposeCommand, setupRequirementIssues } from "../src/setup";
+import { checkAppHealth, defaultCheckout, findCommand, formatReadySummary, mergeSetupAnswers, nextAvailablePort, registrationOutcome, resolveComposeCommand, setupRequirementIssues } from "../src/setup";
 
 class RequirementRunner implements CommandRunner {
   constructor(
@@ -38,6 +38,15 @@ describe("interactive setup", () => {
       "Caddy is not installed",
       "systemd is not installed",
     ]);
+  });
+
+  test("reports configured app health for list status", async () => {
+    expect(await checkAppHealth("http://127.0.0.1:9100/healthz", 1_000, async () => new Response(null, { status: 204 })))
+      .toEqual({ healthy: true, detail: "healthy (HTTP 204)" });
+    expect(await checkAppHealth("http://127.0.0.1:9100/healthz", 1_000, async () => new Response(null, { status: 503 })))
+      .toEqual({ healthy: false, detail: "unhealthy (HTTP 503)" });
+    expect(await checkAppHealth("http://127.0.0.1:9100/healthz", 1_000, async () => { throw new Error("refused"); }))
+      .toEqual({ healthy: false, detail: "unreachable" });
   });
 
   test("checks rootless Podman and the systemd user session", async () => {
