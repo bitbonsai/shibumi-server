@@ -16,12 +16,18 @@ if (!existsSync(resolve(website, "scripts", "sync-server-version.ts"))) {
 }
 
 for (let attempt = 1; attempt <= 8; attempt += 1) {
-  const sync = Bun.spawnSync([process.execPath, "run", "sync:server", version], { cwd: website, stdout: "inherit", stderr: "inherit" });
+  const sync = Bun.spawnSync([process.execPath, "run", "sync:server", version], { cwd: website, stdout: "pipe", stderr: "pipe" });
   if (sync.exitCode === 0) {
+    process.stdout.write(sync.stdout);
     console.log("Website pin synced. Review, commit, and deploy shibumistack.dev.");
     process.exit(0);
   }
-  if (attempt < 8) await Bun.sleep(attempt * 2_000);
+  if (attempt === 8) {
+    process.stdout.write(sync.stdout);
+    process.stderr.write(sync.stderr);
+  } else {
+    await Bun.sleep(attempt * 2_000);
+  }
 }
 
 throw new Error("website version sync failed after npm propagation wait");
