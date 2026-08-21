@@ -98,9 +98,9 @@ Preflight checks, deadlines, and cgroup ceilings are defense in depth, not a sub
 
 ## Image cleanup
 
-After a healthy deployment, the receiver tags the active image in an app-specific local repository. It keeps that image plus the configured number of earlier successful images, one by default, so each app retains two successful images total. Release tags older than that window are removed before `podman image prune --force` removes dangling data.
+After a healthy deployment, the receiver keeps only the active image and one app-specific `rollback-<timestamp>-<commit>` tag by default. Rollback tag expires after 12 hours; startup restores expiry timers after service restarts. Receiver removes legacy `release-*`, `staging-*`, prior rollback, current upload, and upload tags for superseded commits before `podman image prune --force` removes dangling data.
 
-The retention setting accepts zero or one rollback image. Image cleanup does not use `--all` or `system prune`, so retained tags, running containers, volumes, and unrelated networks remain. Retention or cleanup failure is logged but does not turn a healthy deployment into a failed one.
+`releaseRetention` accepts one or two total images and defaults to two. Image cleanup does not use `--all` or `system prune`, so running containers, volumes, and unrelated networks remain. Retention or cleanup failure logs a warning without turning a healthy deployment into a failed one.
 
 ## Ports and Caddy
 

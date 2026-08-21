@@ -72,7 +72,7 @@ integrationTest("deploys a signed webhook through a disposable Git checkout and 
       buildTimeoutMs: 60_000,
       healthAttempts: 30,
       healthIntervalMs: 250,
-      retainedRollbackImages: 2,
+      releaseRetention: 2,
       deploymentMode: "build",
     };
 

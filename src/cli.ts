@@ -73,6 +73,7 @@ async function serve(configPath: string, statusDirectory: string): Promise<void>
     logStore: new DeploymentLogStore(paths.logsDirectory),
     queueStore: new DeploymentQueueStore(`${statusDirectory}/queue`),
   });
+  await service.scheduleImageCleanup();
   await service.resumeQueued();
   const server = Bun.serve({
     hostname: config.listen.hostname,

@@ -24,7 +24,7 @@ export interface AppConfig {
   buildTimeoutMs: number;
   healthAttempts: number;
   healthIntervalMs: number;
-  retainedRollbackImages: number;
+  releaseRetention: number;
   deploymentMode: "build" | "prebuilt";
   caddyMode?: "preserve" | "managed";
 }
@@ -148,6 +148,15 @@ export function parseConfig(value: unknown): ServerConfig {
     if (domain !== undefined && !DOMAIN.test(domain)) throw new Error(`apps.${appId}.domain must be a lowercase public hostname`);
 
     const configuredComposeCommand = command(appValue.composeCommand ?? ["podman", "compose"], `apps.${appId}.composeCommand`);
+    const releaseRetention = appValue.releaseRetention === undefined
+      ? appValue.retainedRollbackImages === undefined
+        ? 2
+        : integer(appValue.retainedRollbackImages, `apps.${appId}.retainedRollbackImages`, 0, 1) + 1
+      : integer(appValue.releaseRetention, `apps.${appId}.releaseRetention`, 1, 2);
+    if (appValue.releaseRetention !== undefined && appValue.retainedRollbackImages !== undefined
+      && releaseRetention !== integer(appValue.retainedRollbackImages, `apps.${appId}.retainedRollbackImages`, 0, 1) + 1) {
+      throw new Error(`apps.${appId}.releaseRetention must equal retainedRollbackImages + 1`);
+    }
     const app: AppConfig = {
       domain,
       repository,
@@ -180,12 +189,7 @@ export function parseConfig(value: unknown): ServerConfig {
       buildTimeoutMs: integer(appValue.buildTimeoutMs ?? 600_000, `apps.${appId}.buildTimeoutMs`, 1_000, 3_600_000),
       healthAttempts: integer(appValue.healthAttempts ?? 20, `apps.${appId}.healthAttempts`, 1, 120),
       healthIntervalMs: integer(appValue.healthIntervalMs ?? 500, `apps.${appId}.healthIntervalMs`, 10, 60_000),
-      retainedRollbackImages: integer(
-        appValue.retainedRollbackImages ?? 1,
-        `apps.${appId}.retainedRollbackImages`,
-        0,
-        1,
-      ),
+      releaseRetention,
       deploymentMode: appValue.deploymentMode === undefined || appValue.deploymentMode === "build"
         ? "build"
         : appValue.deploymentMode === "prebuilt"

@@ -5,6 +5,7 @@ import { composePath, type AppConfig } from "./config";
 import { inspectPrebuiltImageMetadata, runtimeImage, uploadedImage } from "./prebuilt";
 
 const MEBIBYTE = 1024 * 1024;
+export const ROLLBACK_RETENTION_MS = 12 * 60 * 60 * 1_000;
 
 export interface CommandOptions {
   cwd?: string;
@@ -29,6 +30,7 @@ export interface CommandRunner {
 
 export interface DeploymentLogger {
   info(message: string, details?: Record<string, unknown>): void;
+  warn?(message: string, details?: Record<string, unknown>): void;
   error(message: string, details?: Record<string, unknown>): void;
 }
 
@@ -231,82 +233,49 @@ async function waitForHealth(app: AppConfig, dependencies: DeployDependencies): 
   throw new DeploymentError("health", `health check did not pass after ${app.healthAttempts} attempts`);
 }
 
-async function retainReleaseImages(
-  appId: string,
-  app: AppConfig,
-  commit: string,
-  releaseTimestamp: number,
-  composeExecutable: string,
-  compose: string[],
-  options: CommandOptions,
+async function expireRollbackImage(
+  image: string,
   dependencies: DeployDependencies,
 ): Promise<void> {
-  const repository = `localhost/shibumi-server/${appId}`;
-  const tag = `release-${releaseTimestamp}-${commit.slice(0, 12)}`;
-  const release = `${repository}:${tag}`;
-
   try {
-    const container = await runChecked(
-      dependencies,
-      "retain",
-      "podman",
-      [
-        "container", "list",
-        "--filter", `label=io.podman.compose.project=${app.composeProject}`,
-        "--filter", `label=io.podman.compose.service=${app.service}`,
-        "--format", "{{.ID}}",
-      ],
-      { capture: true },
-    );
-    const containerId = container.stdout.trim().split(/\s+/)[0];
-    if (!containerId) throw new DeploymentError("retain", "cannot find the healthy application container");
-
-    const image = await runChecked(
-      dependencies,
-      "retain",
-      "podman",
-      ["container", "inspect", "--format", "{{.Image}}", containerId],
-      { capture: true },
-    );
-    const imageId = image.stdout.trim();
-    if (!imageId) throw new DeploymentError("retain", "cannot find the healthy application image");
-
-    await runChecked(dependencies, "retain", "podman", ["image", "tag", imageId, release], { capture: true });
-    const listed = await runChecked(
-      dependencies,
-      "retain",
-      "podman",
-      ["image", "list", "--filter", `reference=${repository}:release-*`, "--format", "{{.Tag}}"],
-      { capture: true },
-    );
-    const releases = new Set(listed.stdout.split(/\r?\n/).filter((value) => /^release-\d{13}-[a-f0-9]{12}$/.test(value)));
-    releases.add(tag);
-    const retained = app.retainedRollbackImages + 1;
-    const expired = [...releases]
-      .sort((left, right) => right.localeCompare(left))
-      .slice(retained);
-
-    for (const expiredTag of expired) {
-      await runChecked(
-        dependencies,
-        "retain",
-        "podman",
-        ["image", "rm", `${repository}:${expiredTag}`],
-        { capture: true },
-      );
-    }
-    await runChecked(
-      dependencies,
-      "prune",
-      "podman",
-      ["image", "prune", "--force"],
-      { capture: true, timeoutMs: 60_000 },
-    );
+    const exists = await dependencies.runner.run("podman", ["image", "exists", image], { capture: true });
+    if (exists.exitCode !== 0) return;
+    const removed = await dependencies.runner.run("podman", ["image", "rm", image], { capture: true });
+    if (removed.exitCode !== 0) throw new Error(removed.stderr.trim() || `podman exited with code ${removed.exitCode}`);
+    await dependencies.runner.run("podman", ["image", "prune", "--force"], { capture: true, timeoutMs: 60_000 });
   } catch (error) {
-    dependencies.logger.error("release image retention failed after a healthy deployment", {
-      app: appId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    const details = { image, error: error instanceof Error ? error.message : String(error) };
+    if (dependencies.logger.warn) dependencies.logger.warn("rollback image expiry warning", details);
+    else dependencies.logger.error("rollback image expiry warning", details);
+  }
+}
+
+function armRollbackExpiry(image: string, expiresAt: number, dependencies: DeployDependencies): void {
+  const timer = setTimeout(() => void expireRollbackImage(image, dependencies), Math.max(0, expiresAt - Date.now()));
+  timer.unref();
+}
+
+export async function scheduleRollbackImageExpiry(
+  appId: string,
+  dependencies: DeployDependencies,
+  now = Date.now(),
+): Promise<void> {
+  const repository = `localhost/shibumi-server/${appId}`;
+  try {
+    const listed = await dependencies.runner.run("podman", [
+      "image", "list", "--filter", `reference=${repository}:rollback-*`, "--format", "{{.Tag}}",
+    ], { capture: true });
+    if (listed.exitCode !== 0) throw new Error(listed.stderr.trim() || `podman exited with code ${listed.exitCode}`);
+    for (const tag of listed.stdout.split(/\r?\n/).filter((value) => /^rollback-\d{13}-[a-f0-9]{12}$/.test(value))) {
+      const image = `${repository}:${tag}`;
+      const expiresAt = Number(tag.split("-")[1]) + ROLLBACK_RETENTION_MS;
+      if (expiresAt <= now) await expireRollbackImage(image, dependencies);
+      else armRollbackExpiry(image, expiresAt, dependencies);
+    }
+  } catch (error) {
+    const details = { app: appId, error: error instanceof Error ? error.message : String(error) };
+    if (dependencies.logger.warn) dependencies.logger.warn("rollback image expiry warning", details);
+    else dependencies.logger.error("rollback image expiry warning", details);
   }
 }
 
@@ -319,6 +288,97 @@ interface RunningRelease {
   imageId: string;
   imageName: string;
   metadata?: DeployMetadata;
+}
+
+async function retainRollbackImage(
+  appId: string,
+  app: AppConfig,
+  previous: RunningRelease | undefined,
+  commit: string,
+  retentionTimestamp: number,
+  removeCurrentUpload: boolean,
+  dependencies: DeployDependencies,
+): Promise<void> {
+  const repository = `localhost/shibumi-server/${appId}`;
+  const uploadRepository = `localhost/shibumi-server/upload/${appId}`;
+  const warn = (action: string, error: unknown) => {
+    const details = { app: appId, action, error: error instanceof Error ? error.message : String(error) };
+    if (dependencies.logger.warn) dependencies.logger.warn("image retention warning", details);
+    else dependencies.logger.error("image retention warning", details);
+  };
+  const bestEffort = async (action: string, args: string[], timeoutMs?: number): Promise<CommandResult | undefined> => {
+    try {
+      const result = await dependencies.runner.run("podman", args, { capture: true, timeoutMs });
+      if (result.exitCode !== 0) {
+        warn(action, result.stderr.trim() || `podman exited with code ${result.exitCode}`);
+        return undefined;
+      }
+      return result;
+    } catch (error) {
+      warn(action, error);
+      return undefined;
+    }
+  };
+
+  const listed = await bestEffort("list app images", [
+    "image", "list", "--filter", `reference=${repository}:*`, "--format", "{{.Tag}}",
+  ]);
+  if (listed) {
+    const tags = listed.stdout.split(/\r?\n/).filter(Boolean);
+    const legacy = tags
+      .filter((value) => /^release-\d{13}-[a-f0-9]{12}$/.test(value))
+      .sort((left, right) => Number(right.split("-")[1]) - Number(left.split("-")[1]));
+    let previousCommit = previous?.metadata?.commit.slice(0, 12);
+    if (previous && !previousCommit) {
+      for (const legacyTag of legacy) {
+        const inspected = await bestEffort(`inspect ${repository}:${legacyTag}`, [
+          "image", "inspect", "--format", "{{.Id}}", `${repository}:${legacyTag}`,
+        ]);
+        if (inspected?.stdout.trim() === previous.imageId) {
+          previousCommit = legacyTag.slice(-12);
+          break;
+        }
+      }
+    }
+
+    const rollbackTag = previous && previousCommit && app.releaseRetention > 1
+      ? `rollback-${retentionTimestamp}-${previousCommit}`
+      : undefined;
+    const taggedRollback = rollbackTag && previous
+      ? await bestEffort("tag rollback image", ["image", "tag", previous.imageId, `${repository}:${rollbackTag}`])
+      : undefined;
+    if (taggedRollback && rollbackTag) {
+      armRollbackExpiry(`${repository}:${rollbackTag}`, retentionTimestamp + ROLLBACK_RETENTION_MS, dependencies);
+    }
+    const retainedTag = taggedRollback
+      ? rollbackTag
+      : previous && app.releaseRetention > 1
+        ? tags.filter((value) => /^rollback-\d{13}-[a-f0-9]{12}$/.test(value))
+          .sort((left, right) => Number(right.split("-")[1]) - Number(left.split("-")[1]))[0] ?? legacy[0]
+        : undefined;
+
+    const staleTags = tags.filter((value) =>
+      (/^(?:release|rollback)-\d{13}-[a-f0-9]{12}$/.test(value) && value !== retainedTag)
+      || value.startsWith("staging-"));
+    const superseded = new Set(staleTags.flatMap((value) => {
+      const revision = /([a-f0-9]{12,40})$/.exec(value)?.[1];
+      return revision ? [revision.slice(0, 12)] : [];
+    }));
+    const stale = new Set(staleTags.map((value) => `${repository}:${value}`));
+    if (removeCurrentUpload) stale.add(uploadedImage(appId, commit));
+    const uploads = await bestEffort("list uploaded images", [
+      "image", "list", "--filter", `reference=${uploadRepository}:*`, "--format", "{{.Tag}}",
+    ]);
+    if (uploads) {
+      for (const uploadTag of uploads.stdout.split(/\r?\n/).filter((value) => /^[a-f0-9]{40}$/.test(value))) {
+        if (superseded.has(uploadTag.slice(0, 12))) stale.add(`${uploadRepository}:${uploadTag}`);
+      }
+    }
+    for (const imageName of stale) await bestEffort(`remove ${imageName}`, ["image", "rm", imageName]);
+  } else if (removeCurrentUpload) {
+    await bestEffort("remove current upload tag", ["image", "rm", uploadedImage(appId, commit)]);
+  }
+  await bestEffort("prune dangling images", ["image", "prune", "--force"], 60_000);
 }
 
 function metadataFromEnvironment(environment: string[]): DeployMetadata | undefined {
@@ -434,10 +494,12 @@ export async function rollbackToPreviousImage(
     dependencies,
     "rollback",
     "podman",
-    ["image", "list", "--filter", `reference=${repository}:release-*`, "--format", "{{.Tag}}"],
+    ["image", "list", "--filter", `reference=${repository}:*`, "--format", "{{.Tag}}"],
     { capture: true },
   );
-  const tags = listed.stdout.split(/\r?\n/).filter((tag) => /^release-\d{13}-[a-f0-9]{12}$/.test(tag)).sort().reverse();
+  const tags = listed.stdout.split(/\r?\n/)
+    .filter((tag) => /^(?:rollback|release)-\d{13}-[a-f0-9]{12}$/.test(tag))
+    .sort((left, right) => Number(right.split("-")[1]) - Number(left.split("-")[1]));
   let previous: { imageId: string; commitPrefix: string } | undefined;
   for (const tag of tags) {
     const inspected = await runChecked(
@@ -492,7 +554,7 @@ export async function rollbackToPreviousImage(
     await dependencies.onOutput?.("restore", retryBudgetSummary("Previous release restored", Date.now() - replacementStartedAt));
     throw error;
   }
-  await retainReleaseImages(appId, app, commit, startedAt, composeExecutable, compose, options, dependencies);
+  await retainRollbackImage(appId, app, current, commit, startedAt, false, dependencies);
   return commit;
 }
 
@@ -583,10 +645,7 @@ export async function deploy(
     if (previous) await dependencies.onOutput?.("restore", retryBudgetSummary("Previous release restored", Date.now() - replacementStartedAt));
     throw error;
   }
-  await retainReleaseImages(appId, app, commit, startedAt, composeExecutable, compose, options, dependencies);
-  if (app.deploymentMode === "prebuilt") {
-    await dependencies.runner.run("podman", ["image", "rm", uploadedImage(appId, commit)], { capture: true });
-  }
+  await retainRollbackImage(appId, app, previous, commit, startedAt, app.deploymentMode === "prebuilt", dependencies);
 
   dependencies.logger.info("deployment succeeded", {
     app: appId,

@@ -30,7 +30,7 @@ describe("configuration", () => {
     expect(parsed.apps.myapp.minimumFreeDiskMb).toBe(4_096);
     expect(parsed.apps.myapp.buildTimeoutMs).toBe(600_000);
     expect(parsed.apps.myapp.healthAttempts).toBe(20);
-    expect(parsed.apps.myapp.retainedRollbackImages).toBe(1);
+    expect(parsed.apps.myapp.releaseRetention).toBe(2);
     expect(parsed.apps.myapp.deploymentMode).toBe("build");
     expect(parseConfig(config({ deploymentMode: "prebuilt" })).apps.myapp.deploymentMode).toBe("prebuilt");
     expect(parseConfig(config({ testCommand: undefined })).apps.myapp.testCommand).toBeUndefined();
@@ -50,7 +50,10 @@ describe("configuration", () => {
     expect(() => parseConfig(config({ minimumFreeMemoryMb: 128 }))).toThrow("between 256");
     expect(() => parseConfig(config({ minimumFreeDiskMb: 128 }))).toThrow("between 256");
     expect(() => parseConfig(config({ buildTimeoutMs: 999 }))).toThrow("between 1000");
+    expect(parseConfig(config({ releaseRetention: 1 })).apps.myapp.releaseRetention).toBe(1);
+    expect(() => parseConfig(config({ releaseRetention: 3 }))).toThrow("between 1 and 2");
     expect(() => parseConfig(config({ retainedRollbackImages: 2 }))).toThrow("between 0 and 1");
+    expect(() => parseConfig(config({ releaseRetention: 1, retainedRollbackImages: 1 }))).toThrow("must equal");
   });
 
   test("requires the health URL to use the assigned app port", () => {

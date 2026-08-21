@@ -1,6 +1,6 @@
 import type { ServerConfig } from "./config";
 import { DeliveryCache } from "./deliveries";
-import { defaultDeployDependencies, deploy, DeploymentError, type DeployDependencies, type DeploymentLogger } from "./deploy";
+import { defaultDeployDependencies, deploy, DeploymentError, scheduleRollbackImageExpiry, type DeployDependencies, type DeploymentLogger } from "./deploy";
 import { isGitHubSignature, normalizeGitHubDeliveryId, parseGitHubPush, verifyGitHubSignature } from "./github";
 import { AppLocks } from "./locks";
 import { DeploymentStatusStore, type DeploymentState } from "./status";
@@ -81,6 +81,11 @@ export class WebhookService {
     this.#historyStore = options.historyStore;
     this.#logStore = options.logStore;
     this.#queueStore = options.queueStore;
+  }
+
+  async scheduleImageCleanup(): Promise<void> {
+    await Promise.all(Object.keys(this.config.apps).map((appId) =>
+      scheduleRollbackImageExpiry(appId, this.#deployDependencies)));
   }
 
   async #writeStatus(appId: string, commit: string, state: DeploymentState, stage: string, message?: string, output?: string): Promise<void> {

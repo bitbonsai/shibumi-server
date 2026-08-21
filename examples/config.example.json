@@ -22,7 +22,7 @@
       "buildTimeoutMs": 600000,
       "healthAttempts": 20,
       "healthIntervalMs": 500,
-      "retainedRollbackImages": 1,
+      "releaseRetention": 2,
       "deploymentMode": "prebuilt",
       "caddyMode": "managed"
     }

@@ -421,7 +421,7 @@ export async function addApp(
         buildTimeoutMs: 600_000,
         healthAttempts: 20,
         healthIntervalMs: 500,
-        retainedRollbackImages: 1,
+        releaseRetention: 2,
         deploymentMode: options.deploymentMode ?? "build",
         caddyMode: options.caddyMode,
       },

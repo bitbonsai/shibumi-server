@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AppConfig } from "../src/config";
-import { BunCommandRunner, deploy, DeploymentError, retryBudgetSummary, rollbackToPreviousImage, type CommandOptions, type CommandResult, type CommandRunner, type DeployDependencies, type Fetcher, type ResourceAvailability } from "../src/deploy";
+import { BunCommandRunner, deploy, DeploymentError, ROLLBACK_RETENTION_MS, retryBudgetSummary, rollbackToPreviousImage, scheduleRollbackImageExpiry, type CommandOptions, type CommandResult, type CommandRunner, type DeployDependencies, type Fetcher, type ResourceAvailability } from "../src/deploy";
 
 const commit = "a".repeat(40);
 const sourceTree = "b".repeat(40);
@@ -21,7 +21,7 @@ const app: AppConfig = {
   buildTimeoutMs: 600_000,
   healthAttempts: 2,
   healthIntervalMs: 10,
-  retainedRollbackImages: 1,
+  releaseRetention: 2,
   deploymentMode: "build",
 };
 
@@ -37,7 +37,13 @@ class FakeRunner implements CommandRunner {
     if (args.includes("ps") && args.includes("--quiet")) return { exitCode: 0, stdout: "container-id\n", stderr: "" };
     if (args[0] === "container" && args[1] === "list") return { exitCode: 0, stdout: "container-id\n", stderr: "" };
     if (args[0] === "container" && args[1] === "inspect") {
-      return { exitCode: 0, stdout: `${args[3] === "{{.Image}}" ? "sha256:image-id" : "localhost/myapp:web"}\n`, stderr: "" };
+      return {
+        exitCode: 0,
+        stdout: args[3] === "{{.Image}}"
+          ? "sha256:image-id\n"
+          : `localhost/myapp:web\nSHIBUMI_COMMIT=${"b".repeat(40)}\nSHIBUMI_DEPLOYED_AT=2025-01-01T00:00:00.000Z\n`,
+        stderr: "",
+      };
     }
     return { exitCode: 0, stdout: "", stderr: "" };
   }
@@ -86,17 +92,11 @@ describe("deployment pipeline", () => {
     ]);
     expect(calls[7]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "--file", "-", "ps", "--quiet", "web"]);
     expect(calls[10]).toEqual(["podman", "compose", "--project-name", "myapp", "--file", `${app.checkout}/compose.yaml`, "--file", "-", "up", "-d", "--remove-orphans", "--force-recreate"]);
-    expect(calls[11]).toEqual([
-      "podman", "container", "list",
-      "--filter", "label=io.podman.compose.project=myapp",
-      "--filter", "label=io.podman.compose.service=web",
-      "--format", "{{.ID}}",
-    ]);
-    expect(calls[12]).toEqual(["podman", "container", "inspect", "--format", "{{.Image}}", "container-id"]);
-    expect(calls[13]?.slice(0, 4)).toEqual(["podman", "image", "tag", "sha256:image-id"]);
-    expect(calls[13]?.[4]).toMatch(/^localhost\/shibumi-server\/myapp:release-\d{13}-a{12}$/);
-    expect(calls[14]).toEqual(["podman", "image", "list", "--filter", "reference=localhost/shibumi-server/myapp:release-*", "--format", "{{.Tag}}"]);
-    expect(calls[15]).toEqual(["podman", "image", "prune", "--force"]);
+    expect(calls[11]).toEqual(["podman", "image", "list", "--filter", "reference=localhost/shibumi-server/myapp:*", "--format", "{{.Tag}}"]);
+    expect(calls[12]?.slice(0, 4)).toEqual(["podman", "image", "tag", "sha256:image-id"]);
+    expect(calls[12]?.[4]).toMatch(/^localhost\/shibumi-server\/myapp:rollback-\d{13}-b{12}$/);
+    expect(calls[13]).toEqual(["podman", "image", "list", "--filter", "reference=localhost/shibumi-server/upload/myapp:*", "--format", "{{.Tag}}"]);
+    expect(calls[14]).toEqual(["podman", "image", "prune", "--force"]);
     const start = runner.calls.find(({ args }) => args.includes("up"));
     expect(start?.options?.env).toEqual({ SHIBUMI_PORT: "9100" });
     expect(start?.options?.input).toContain(`SHIBUMI_COMMIT: ${JSON.stringify(commit)}`);
@@ -212,19 +212,22 @@ describe("deployment pipeline", () => {
     expect(runner.calls.at(-1)?.args).toEqual(["image", "prune", "--force"]);
   });
 
-  test("keeps two successful images total", async () => {
+  test("keeps only current and one rollback image while removing legacy tags", async () => {
     class RetentionRunner extends FakeRunner {
       override async run(command: string, args: string[], options?: CommandOptions): Promise<CommandResult> {
         if (command === "podman" && args[0] === "image" && args[1] === "list") {
           this.calls.push({ command, args, options });
           return {
             exitCode: 0,
-            stdout: [
-              "release-1700000004000-bbbbbbbbbbbb",
-              "release-1700000003000-cccccccccccc",
-              "release-1700000002000-dddddddddddd",
-              "release-1700000001000-eeeeeeeeeeee",
-            ].join("\n"),
+            stdout: args[3] === "reference=localhost/shibumi-server/upload/myapp:*"
+              ? `${"b".repeat(40)}\n${"c".repeat(40)}\n${"f".repeat(40)}\n`
+              : [
+                  "release-1700000004000-bbbbbbbbbbbb",
+                  "release-1700000003000-cccccccccccc",
+                  "release-1700000002000-dddddddddddd",
+                  "release-1700000001000-eeeeeeeeeeee",
+                  "staging-1700000003000-cccccccccccc",
+                ].join("\n"),
             stderr: "",
           };
         }
@@ -244,9 +247,37 @@ describe("deployment pipeline", () => {
       .filter(({ command, args }) => command === "podman" && args[0] === "image" && args[1] === "rm")
       .map(({ args }) => args[2]);
     expect(removed).toEqual([
+      "localhost/shibumi-server/myapp:release-1700000004000-bbbbbbbbbbbb",
       "localhost/shibumi-server/myapp:release-1700000003000-cccccccccccc",
       "localhost/shibumi-server/myapp:release-1700000002000-dddddddddddd",
       "localhost/shibumi-server/myapp:release-1700000001000-eeeeeeeeeeee",
+      "localhost/shibumi-server/myapp:staging-1700000003000-cccccccccccc",
+      `localhost/shibumi-server/upload/myapp:${"b".repeat(40)}`,
+      `localhost/shibumi-server/upload/myapp:${"c".repeat(40)}`,
+    ]);
+    const rollbackTag = runner.calls.find(({ args }) => args[0] === "image" && args[1] === "tag" && args[2] === "sha256:image-id")?.args[3];
+    expect(rollbackTag).toMatch(/^localhost\/shibumi-server\/myapp:rollback-\d{13}-b{12}$/);
+    expect(removed).not.toContain(`localhost/shibumi-server/upload/myapp:${"f".repeat(40)}`);
+    expect(runner.calls.at(-1)?.args).toEqual(["image", "prune", "--force"]);
+  });
+
+  test("deletes rollback image after twelve hours", async () => {
+    const timestamp = 1_700_000_000_000;
+    class ExpiryRunner extends FakeRunner {
+      override async run(command: string, args: string[], options?: CommandOptions): Promise<CommandResult> {
+        if (args[0] === "image" && args[1] === "list") {
+          this.calls.push({ command, args, options });
+          return { exitCode: 0, stdout: `rollback-${timestamp}-bbbbbbbbbbbb\n`, stderr: "" };
+        }
+        return super.run(command, args, options);
+      }
+    }
+    const runner = new ExpiryRunner();
+
+    await scheduleRollbackImageExpiry("myapp", dependencies(runner), timestamp + ROLLBACK_RETENTION_MS);
+
+    expect(runner.calls.map(({ args }) => args)).toContainEqual([
+      "image", "rm", `localhost/shibumi-server/myapp:rollback-${timestamp}-bbbbbbbbbbbb`,
     ]);
     expect(runner.calls.at(-1)?.args).toEqual(["image", "prune", "--force"]);
   });

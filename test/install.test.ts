@@ -191,7 +191,7 @@ describe("app registration", () => {
     expect(result.config.apps["example-com"].composeCommand).toEqual(["podman-compose"]);
     expect(result.config.apps["example-com"].healthUrl).toBe("http://127.0.0.1:9100/healthz");
     expect(result.config.apps["example-com"].minimumFreeMemoryMb).toBe(2_048);
-    expect(result.config.apps["example-com"].retainedRollbackImages).toBe(1);
+    expect(result.config.apps["example-com"].releaseRetention).toBe(2);
 
     const config = JSON.parse(await readFile(paths.config, "utf8"));
     expect(config.apps["example-com"].repository).toBe("owner/repository");
