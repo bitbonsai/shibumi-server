@@ -28,7 +28,7 @@ export interface DetectedCaddySite {
 
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const APP_ID = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-export const APP_RETRY_BUDGET_MS = 5_000;
+export const APP_RETRY_BUDGET_MS = 20_000;
 
 function validate(options: CaddySiteOptions): void {
   if (!DOMAIN.test(options.domain)) throw new Error("invalid Caddy domain");

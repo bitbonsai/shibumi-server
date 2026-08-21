@@ -51,7 +51,7 @@ describe("Caddy source changes", () => {
   test("adds retry budget only to exact managed app upstream", () => {
     const managed = "handle {\n    reverse_proxy 127.0.0.1:9100\n}\n";
     const changed = refreshManagedUpstream(managed, 9100);
-    expect(changed).toBe("handle {\n    reverse_proxy 127.0.0.1:9100 {\n        lb_try_duration 5000ms\n    }\n}\n");
+    expect(changed).toBe("handle {\n    reverse_proxy 127.0.0.1:9100 {\n        lb_try_duration 20000ms\n    }\n}\n");
     expect(refreshManagedUpstream(changed, 9100)).toBe(changed);
     expect(() => refreshManagedUpstream("reverse_proxy localhost:9100\n", 9100)).toThrow("could not be identified safely");
   });

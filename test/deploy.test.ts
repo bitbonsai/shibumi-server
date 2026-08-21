@@ -72,8 +72,8 @@ describe("deployment pipeline", () => {
     await deploy("myapp", app, commit, deps);
 
     expect(output).toHaveLength(1);
-    expect(output[0]).toMatch(/^health: Replacement healthy in \d+ms; Caddy retry budget 5000ms; headroom \d+ms$/);
-    expect(retryBudgetSummary("Replacement healthy", 5_250)).toBe("Replacement healthy in 5250ms; Caddy retry budget 5000ms; exceeded by 250ms");
+    expect(output[0]).toMatch(/^health: Replacement healthy in \d+ms; Caddy retry budget 20000ms; headroom \d+ms$/);
+    expect(retryBudgetSummary("Replacement healthy", 20_250)).toBe("Replacement healthy in 20250ms; Caddy retry budget 20000ms; exceeded by 250ms");
     const calls = runner.calls.map(({ command, args }) => [command, ...args]);
     expect(calls.slice(0, 7)).toEqual([
       ["git", "-C", app.checkout, "status", "--porcelain"],

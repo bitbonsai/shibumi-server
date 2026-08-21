@@ -113,7 +113,7 @@ services:
       - "127.0.0.1:${SHIBUMI_PORT}:3000"
 ```
 
-Caddy maps the public domain to that port. Managed app proxies use a five-second `lb_try_duration`, so requests wait and retry when Compose briefly releases the loopback port during replacement. This bridges normal restart gaps without running two application containers. Existing in-flight requests and long-lived connections can still fail, and restarts exceeding the budget return an upstream error.
+Caddy maps the public domain to that port. Managed app proxies use a 20-second `lb_try_duration`, so requests wait and retry when Compose briefly releases the loopback port during replacement. This bridges normal restart gaps without running two application containers. Existing in-flight requests and long-lived connections can still fail, and restarts exceeding the budget return an upstream error.
 
 Each successful deployment log records elapsed time from replacement start until health passes, plus remaining or exceeded retry budget. This readiness time is a conservative upper bound for listener downtime. Read latest measurement with `shis logs <app-id>`; logs remain mode `0600` and bounded to 256 KiB. `shis caddy-refresh <app-id>` adds retry budget to an existing managed fragment through constrained helper, preserving all other Caddy settings. Other Compose services remain private on the application network. Ports are operational configuration, not secrets, but real machine inventory does not belong in the public repository.
 
