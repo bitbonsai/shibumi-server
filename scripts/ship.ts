@@ -11,8 +11,8 @@
  * Shibumi config. Webhook secrets stay on the server and pass directly to GitHub CLI.
  */
 
-import { cancel, confirm, intro, isCancel, log, outro, select, spinner, text } from "@clack/prompts";
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cancel, confirm, intro, isCancel, log, outro, select, spinner as animatedSpinner, text } from "@clack/prompts";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { createConnection } from "node:net";
 import { dirname, join, resolve } from "node:path";
@@ -25,10 +25,15 @@ const SERVER_HOSTNAME = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 const COMMIT = /^[a-f0-9]{40}$/;
 const SERVER_CLI = "~/.local/bin/shibumi-server";
 const LATEST_SOURCE = "https://shibumistack.dev/ship/latest.ts";
-const CURRENT_SOURCE = "https://shibumistack.dev/ship/v30.ts";
+const CURRENT_SOURCE = "https://shibumistack.dev/ship/v41.ts";
 let sshControlDirectory: string | undefined;
 let sshControlTarget: string | undefined;
-const accent = (value: string) => process.stdout.isTTY && !("NO_COLOR" in process.env) && process.env.TERM !== "dumb"
+
+export function supportsTerminalColor(env: NodeJS.ProcessEnv = process.env, isTTY = Boolean(process.stdout.isTTY)): boolean {
+  return isTTY && !("NO_COLOR" in env) && env.TERM !== "dumb";
+}
+
+const accent = (value: string) => supportsTerminalColor()
   ? `\x1b[38;5;208m${value}\x1b[0m`
   : value;
 
@@ -57,13 +62,14 @@ interface Result {
 }
 
 interface DeployStatus {
-  commit?: string;
-  state?: string;
-  stage?: string;
+  commit: string;
+  state: "accepted" | "running" | "succeeded" | "failed";
+  stage: string;
   message?: string;
   output?: string;
   url?: string;
   queuedCommit?: string;
+  updatedAt: string;
 }
 
 interface HistoryEntry {
@@ -79,6 +85,7 @@ interface ShipOptions {
   update: boolean;
   rollback: boolean;
   logs: boolean;
+  status: boolean;
   dev: boolean;
   rebuild: boolean;
   yes: boolean;
@@ -87,7 +94,7 @@ interface ShipOptions {
   trigger?: "ship" | "github-push";
 }
 
-let options: ShipOptions = { setup: false, update: false, rollback: false, logs: false, dev: false, rebuild: false, yes: false };
+let options: ShipOptions = { setup: false, update: false, rollback: false, logs: false, status: false, dev: false, rebuild: false, yes: false };
 let agentRun = false;
 
 export function isAgentExecution(env: NodeJS.ProcessEnv = process.env, stdinTTY = Boolean(process.stdin.isTTY), stdoutTTY = Boolean(process.stdout.isTTY)): boolean {
@@ -95,8 +102,41 @@ export function isAgentExecution(env: NodeJS.ProcessEnv = process.env, stdinTTY 
     || Object.keys(env).some((key) => /^(?:CODEX_|CURSOR_AGENT|AIDER_)/.test(key));
 }
 
+export function shouldAnimateProgress(agentExecution: boolean, stdoutTTY: boolean): boolean {
+  return !agentExecution && stdoutTTY;
+}
+
+type ShipSpinner = {
+  start(message?: string): void;
+  message(message?: string): void;
+  stop(message?: string, code?: number): void;
+};
+
+function spinner(): ShipSpinner {
+  if (shouldAnimateProgress(agentRun, Boolean(process.stdout.isTTY))) {
+    // Clack 1.x split error stops into error(); 0.7 (pinned by older installers)
+    // only has stop(message, code). Support both at runtime.
+    const animated = animatedSpinner() as ShipSpinner & { error?: (message?: string) => void };
+    return {
+      start: (message) => animated.start(message),
+      message: (message) => animated.message(message),
+      stop: (message, code) => code && typeof animated.error === "function"
+        ? animated.error(message)
+        : animated.stop(message, code),
+    };
+  }
+  const write = (message?: string, error = false) => {
+    if (message) (error ? process.stderr : process.stdout).write(`${message}\n`);
+  };
+  return {
+    start: (message) => write(message),
+    message: (message) => write(message),
+    stop: (message, code) => write(message, Boolean(code)),
+  };
+}
+
 export function parseShipArgs(args: string[]): ShipOptions {
-  const parsed: ShipOptions = { setup: false, update: false, rollback: false, logs: false, dev: false, rebuild: false, yes: false };
+  const parsed: ShipOptions = { setup: false, update: false, rollback: false, logs: false, status: false, dev: false, rebuild: false, yes: false };
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--") continue;
@@ -104,6 +144,7 @@ export function parseShipArgs(args: string[]): ShipOptions {
     else if (argument === "--update") parsed.update = true;
     else if (argument === "--rollback") parsed.rollback = true;
     else if (argument === "--logs") parsed.logs = true;
+    else if (argument === "--status") parsed.status = true;
     else if (argument === "--dev") parsed.dev = true;
     else if (argument === "--rebuild") parsed.rebuild = true;
     else if (argument === "--yes" || argument === "-y") parsed.yes = true;
@@ -117,12 +158,35 @@ export function parseShipArgs(args: string[]): ShipOptions {
       index += 1;
     } else throw new Error(`unknown ship option: ${argument}`);
   }
-  if ([parsed.setup, parsed.update, parsed.rollback, parsed.logs, parsed.dev].filter(Boolean).length > 1) throw new Error("choose only one ship action");
-  if (parsed.rebuild && (parsed.setup || parsed.update || parsed.rollback || parsed.logs || parsed.dev)) throw new Error("--rebuild applies only to shipping");
+  if ([parsed.setup, parsed.update, parsed.rollback, parsed.logs, parsed.status, parsed.dev].filter(Boolean).length > 1) throw new Error("choose only one ship action");
+  if (parsed.rebuild && (parsed.setup || parsed.update || parsed.rollback || parsed.logs || parsed.status || parsed.dev)) throw new Error("--rebuild applies only to shipping");
   if (parsed.trigger && !parsed.setup) throw new Error("--trigger requires --setup");
   if (parsed.server && !SSH_TARGET.test(parsed.server)) throw new Error("--server must be an SSH host or user@host without spaces");
   if (parsed.domain && !DOMAIN.test(parsed.domain)) throw new Error("--domain must be a lowercase public hostname");
   return parsed;
+}
+
+export function stripDockerDesktopLinks(value: string): string {
+  return value.split(/\r?\n/).filter((line) => !/docker-desktop:\/\//i.test(line)).join("\n");
+}
+
+export function dockerCredentialHelpers(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const config = value as Record<string, unknown>;
+  const helpers = new Set<string>();
+  if (typeof config.credsStore === "string" && config.credsStore) helpers.add(config.credsStore);
+  if (config.credHelpers && typeof config.credHelpers === "object" && !Array.isArray(config.credHelpers)) {
+    for (const helper of Object.values(config.credHelpers)) if (typeof helper === "string" && helper) helpers.add(helper);
+  }
+  return [...helpers];
+}
+
+export function removeDockerCredentialHelper(value: Record<string, unknown>, helper: string): void {
+  if (value.credsStore === helper) delete value.credsStore;
+  if (!value.credHelpers || typeof value.credHelpers !== "object" || Array.isArray(value.credHelpers)) return;
+  const helpers = value.credHelpers as Record<string, unknown>;
+  for (const [registry, configured] of Object.entries(helpers)) if (configured === helper) delete helpers[registry];
+  if (Object.keys(helpers).length === 0) delete value.credHelpers;
 }
 
 export function formatDuration(milliseconds: number): string {
@@ -244,7 +308,7 @@ async function run(args: string[], options: {
     inherit ? Promise.resolve("") : new Response(child.stdout).text(),
     inherit ? Promise.resolve("") : new Response(child.stderr).text(),
   ]);
-  if (exitCode !== 0 && !options.allowFailure) throw new Error(stderr.trim() || `${args[0]} exited with ${exitCode}`);
+  if (exitCode !== 0 && !options.allowFailure) throw new Error(stripDockerDesktopLinks(stderr).trim() || `${args[0]} exited with ${exitCode}`);
   return { exitCode, stdout, stderr };
 }
 
@@ -284,7 +348,7 @@ export function terminalHistory(entries: HistoryEntry[], commit: string): Histor
   return entries.findLast((entry) => entry.commit === commit && ["succeeded", "failed"].includes(entry.state ?? ""));
 }
 
-export function canFollowDeployment(status: DeployStatus | undefined, commit: string): boolean {
+export function canFollowDeployment(status: Pick<DeployStatus, "commit" | "state"> | undefined, commit: string): boolean {
   return status?.commit === commit && ["accepted", "running", "succeeded"].includes(status.state ?? "");
 }
 
@@ -292,9 +356,20 @@ export function shouldTriggerRedeploy(trigger: ClientConfig["trigger"], ahead: n
   return trigger === "ship" || ahead === 0;
 }
 
-export function protectedBranch(value: unknown): boolean | undefined {
-  if (!value || typeof value !== "object" || typeof (value as { protected?: unknown }).protected !== "boolean") return undefined;
-  return (value as { protected: boolean }).protected;
+export function protectedPushBlocked(value: unknown, login?: string, admin = false): boolean | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const protection = value as {
+    enforce_admins?: { enabled?: unknown };
+    required_pull_request_reviews?: {
+      bypass_pull_request_allowances?: { users?: Array<{ login?: unknown }> };
+    } | null;
+  };
+  const reviews = protection.required_pull_request_reviews;
+  if (!reviews) return false;
+  const bypassed = login && reviews.bypass_pull_request_allowances?.users
+    ?.some((user) => user.login === login);
+  if (bypassed || (admin && protection.enforce_admins?.enabled === false)) return false;
+  return true;
 }
 
 const branchProtection = new Map<string, boolean | undefined>();
@@ -303,12 +378,33 @@ async function githubBranchIsProtected(config: ClientConfig): Promise<boolean> {
   const repository = config.repository.slice("github:".length);
   const key = `${repository}#${config.branch}`;
   if (!branchProtection.has(key)) {
+    const endpoint = `repos/${repository}/branches/${encodeURIComponent(config.branch)}/protection`;
     try {
-      const response = await fetch(`https://api.github.com/repos/${repository}/branches/${encodeURIComponent(config.branch)}`, {
-        headers: { Accept: "application/vnd.github+json", "User-Agent": "shibumi-ship" },
-        signal: AbortSignal.timeout(5_000),
-      });
-      branchProtection.set(key, response.ok ? protectedBranch(await response.json()) : undefined);
+      if (Bun.which("gh")) {
+        const details = await run(["gh", "api", endpoint], { allowFailure: true });
+        if (details.exitCode === 0) {
+          const protection: unknown = JSON.parse(details.stdout);
+          if (protectedPushBlocked(protection) === false) branchProtection.set(key, false);
+          else {
+            const [viewer, repo] = await Promise.all([
+              run(["gh", "api", "user", "--jq", ".login"], { allowFailure: true }),
+              run(["gh", "api", `repos/${repository}`, "--jq", ".permissions.admin"], { allowFailure: true }),
+            ]);
+            branchProtection.set(key, protectedPushBlocked(
+              protection,
+              viewer.exitCode === 0 ? viewer.stdout.trim() : undefined,
+              repo.exitCode === 0 && repo.stdout.trim() === "true",
+            ));
+          }
+        }
+      }
+      if (!branchProtection.has(key)) {
+        const response = await fetch(`https://api.github.com/${endpoint}`, {
+          headers: { Accept: "application/vnd.github+json", "User-Agent": "shibumi-ship" },
+          signal: AbortSignal.timeout(5_000),
+        });
+        branchProtection.set(key, response.status === 404 ? false : response.ok ? protectedPushBlocked(await response.json()) : undefined);
+      }
     } catch {
       branchProtection.set(key, undefined);
     }
@@ -318,13 +414,6 @@ async function githubBranchIsProtected(config: ClientConfig): Promise<boolean> {
 
 export function deploymentModeForTrigger(trigger: ClientConfig["trigger"]): ClientConfig["deploymentMode"] {
   return trigger === "ship" ? "prebuilt" : "build";
-}
-
-export function shipConfirmation(mode: ClientConfig["deploymentMode"], ahead: number, branch: string, domain: string): string {
-  if (mode === "prebuilt") return ahead > 0
-    ? `Build and upload image, then push ${branch} to deploy ${domain}?`
-    : `Build and upload image, then redeploy current ${branch} commit to ${domain}?`;
-  return ahead > 0 ? `Push ${branch} and deploy ${domain}?` : `Redeploy current ${branch} commit to ${domain}?`;
 }
 
 export function repositoryFromRemote(remote: string): string {
@@ -665,7 +754,7 @@ async function remoteSetup(target: string, _force: boolean, current?: ClientConf
     const answer = await text({
       message: "App domain",
       placeholder: "example.com",
-      validate: (value) => DOMAIN.test(value) ? undefined : "Use a lowercase public hostname",
+      validate: (value) => value && DOMAIN.test(value) ? undefined : "Use a lowercase public hostname",
     });
     if (isCancel(answer)) throw new Error("setup cancelled");
     domain = answer;
@@ -899,11 +988,11 @@ async function preflight(config: ClientConfig): Promise<number> {
   await run(["git", "fetch", "origin", config.branch]);
   const counts = (await git("rev-list", "--left-right", "--count", `HEAD...origin/${config.branch}`)).split(/\s+/).map(Number);
   if (counts[1] > 0) {
-    progress.error("Branch is behind or diverged");
+    progress.stop("Branch is behind or diverged", 1);
     throw new Error(`pull origin/${config.branch} before shipping`);
   }
   if (counts[0] > 0 && await githubBranchIsProtected(config)) {
-    progress.error(`${config.branch} is protected`);
+    progress.stop(`${config.branch} is protected`, 1);
     throw new Error(`Ship cannot push ${counts[0]} local commit${counts[0] === 1 ? "" : "s"} directly to protected branch ${config.branch}.\n\nNext: push a feature branch, merge its pull request, update local ${config.branch}, then run bun ship.`);
   }
   progress.stop(counts[0] > 0
@@ -917,7 +1006,7 @@ async function preflight(config: ClientConfig): Promise<number> {
     check.start(`Running bun run ${name}`);
     const result = await run(["bun", "run", name], { allowFailure: true });
     if (result.exitCode !== 0) {
-      check.error(`${name} failed`);
+      check.stop(`${name} failed`, 1);
       process.stderr.write(result.stderr || result.stdout);
       throw new Error(`bun run ${name} failed`);
     }
@@ -943,13 +1032,76 @@ export function prebuiltLabels(appId: string, commit: string, repository: string
   };
 }
 
-async function buildAndUpload(config: ClientConfig, target: string, commit: string): Promise<void> {
-  if (config.deploymentMode !== "prebuilt") return;
+export function composeFrontend(plugin: boolean, standalone: boolean): string[] | undefined {
+  if (plugin) return ["docker", "compose"];
+  if (standalone) return ["docker-compose"];
+  return undefined;
+}
+
+async function verifyDockerCredentialHelpers(): Promise<void> {
+  const path = join(process.env.DOCKER_CONFIG || join(homedir(), ".docker"), "config.json");
+  let value: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("expected object");
+    value = parsed as Record<string, unknown>;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw new Error(`Docker CLI config is invalid: ${path}\n\nNext: fix its JSON, verify docker info, then run bun ship.`);
+  }
+  for (const helper of dockerCredentialHelpers(value)) {
+    const executable = `docker-credential-${helper}`;
+    if (Bun.which(executable)) continue;
+    const canOfferRepair = !agentRun && !options.yes && process.stdin.isTTY && process.stdout.isTTY;
+    const accepted = canOfferRepair && await confirm({
+      message: `${executable} is configured but unavailable. Remove its stale entries from ${path}?`,
+      initialValue: true,
+    });
+    if (accepted && !isCancel(accepted)) {
+      const backup = `${path}.shibumi-backup`;
+      const temporary = `${path}.tmp-${process.pid}`;
+      removeDockerCredentialHelper(value, helper);
+      await copyFile(path, backup);
+      await chmod(backup, 0o600);
+      await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+      await chmod(temporary, 0o600);
+      await rename(temporary, path);
+      log.success(`Removed stale ${executable} entries; backup saved to ${backup}`);
+      continue;
+    }
+    const next = helper === "desktop"
+      ? `edit ${path}, remove \"credsStore\": \"desktop\" and any credHelpers entries set to \"desktop\"`
+      : `install ${executable} or remove its stale entry from ${path}`;
+    throw new Error(`Docker credential helper ${executable} is configured but unavailable.\n\nNext: ${next}; verify docker pull oven/bun:alpine, then run bun ship.`);
+  }
+}
+
+async function localBuildFrontend(config: ClientConfig): Promise<string[] | undefined> {
+  if (config.deploymentMode !== "prebuilt") return undefined;
   if (!config.platform) throw new Error("server image platform is missing.\n\nNext: run bun ship:setup.");
   const docker = await run(["docker", "info"], { allowFailure: true });
-  if (docker.exitCode !== 0) throw new Error("Docker is not running.\n\nNext: start Docker Desktop, then run bun ship.");
-  const composeVersion = await run(["docker", "compose", "version"], { allowFailure: true });
-  if (composeVersion.exitCode !== 0) throw new Error("Docker Compose is unavailable.\n\nNext: install or update Docker Desktop, then run bun ship.");
+  if (docker.exitCode !== 0) throw new Error("Docker CLI cannot reach a compatible engine.\n\nNext: start Colima with colima start, verify docker info, then run bun ship.");
+  const plugin = await run(["docker", "compose", "version"], { allowFailure: true });
+  const standalone = plugin.exitCode === 0
+    ? undefined
+    : await run(["docker-compose", "version"], { allowFailure: true });
+  const compose = composeFrontend(plugin.exitCode === 0, standalone?.exitCode === 0);
+  if (!compose) throw new Error("Docker Compose is unavailable.\n\nNext: install docker compose or docker-compose, verify its version, then run bun ship.");
+  await verifyDockerCredentialHelpers();
+  const buildx = await run(["docker", "buildx", "version"], { allowFailure: true });
+  if (buildx.exitCode !== 0) {
+    const detail = buildx.stderr.trim() || buildx.stdout.trim() || "docker buildx version failed";
+    const next = process.platform === "darwin"
+      ? 'brew install docker-buildx; mkdir -p "${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins"; ln -sfn "$(brew --prefix docker-buildx)/bin/docker-buildx" "${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins/docker-buildx"'
+      : "install Docker Buildx plugin for your Docker CLI";
+    throw new Error(`Buildx is unavailable: ${detail}\n\nNext: ${next}; verify docker buildx version, then run bun ship.`);
+  }
+  return compose;
+}
+
+async function buildAndUpload(config: ClientConfig, target: string, commit: string, compose?: string[]): Promise<void> {
+  if (config.deploymentMode !== "prebuilt") return;
+  if (!compose) throw new Error("Docker Compose preflight was not completed");
   const submodules = (await git("ls-files", "--stage")).split("\n").filter((line) => line.startsWith("160000 "));
   if (submodules.length > 0) throw new Error("Prebuilt shipping does not support Git submodules yet.\n\nNext: remove the submodule dependency or use server build mode.");
 
@@ -975,7 +1127,7 @@ async function buildAndUpload(config: ClientConfig, target: string, commit: stri
     // BuildKit layer cache remains available unless --rebuild was requested.
     await run(["docker", "image", "rm", image], { allowFailure: true });
     await run([
-      "docker", "compose",
+      ...compose,
       "--project-name", `shibumi-build-${config.appId}`,
       "--file", join(context, project.composeFile),
       "--file", override,
@@ -995,8 +1147,11 @@ async function buildAndUpload(config: ClientConfig, target: string, commit: stri
     progress.stop(`Built and uploaded ${commit.slice(0, 7)} (${Math.ceil(archiveBytes / 1024 ** 2)} MiB, ${imageId?.replace(/^sha256:/, "").slice(0, 12) || "unknown digest"})`);
     await run(["docker", "image", "rm", image], { allowFailure: true });
   } catch (error) {
-    progress.error("Prebuilt image failed");
-    throw error;
+    progress.stop("Prebuilt image failed", 1);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(message.includes("\n\nNext:")
+      ? message
+      : `${message}\n\nNext: fix the local Docker or Compose error above, verify docker compose build, then run bun ship.`);
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
@@ -1035,7 +1190,7 @@ async function followStatus(config: ClientConfig, target: string, commit: string
       "env", "SHIBUMI_SKIP_UPDATE_CHECK=1", SERVER_CLI, "status", config.appId, "--commit", commit, "--json",
     ], { allowFailure: true });
     if (result.exitCode === 0 && result.stdout.trim() && result.stdout.trim() !== "null") {
-      const status = JSON.parse(result.stdout) as DeployStatus;
+      const status = parseDeployStatus(JSON.parse(result.stdout))!;
       const queued = status.commit !== commit && status.queuedCommit === commit;
       sawQueued ||= queued;
       const displayStage = queued ? `Queued ${commit.slice(0, 7)} next. Current ${status.commit!.slice(0, 7)} ${status.stage}` : status.stage;
@@ -1053,8 +1208,8 @@ async function followStatus(config: ClientConfig, target: string, commit: string
         return;
       }
       if (!queued && status.state === "failed") {
-        progress.error(`Deployment failed during ${status.stage ?? "unknown"}`);
-        throw new Error(`${[status.message ?? "deployment failed", status.output].filter(Boolean).join("\n")}\n\nNext: run bun ship:logs.`);
+        progress.stop(`Deployment failed during ${status.stage ?? "unknown"}`, 1);
+        throw new Error(`${[status.message ?? "deployment failed", status.output].filter(Boolean).join("\n")}\n\nNext: run bun ship --logs.`);
       }
     } else if (lastStage) {
       const history = await ssh(target, [
@@ -1069,8 +1224,8 @@ async function followStatus(config: ClientConfig, target: string, commit: string
           return;
         }
         if (terminal?.state === "failed") {
-          progress.error(`Deployment failed during ${terminal.stage ?? "unknown"}`);
-          throw new Error(`deployment failed during ${terminal.stage ?? "unknown"}.\n\nNext: run bun ship:logs.`);
+          progress.stop(`Deployment failed during ${terminal.stage ?? "unknown"}`, 1);
+          throw new Error(`deployment failed during ${terminal.stage ?? "unknown"}.\n\nNext: run bun ship --logs.`);
         }
       }
     }
@@ -1079,20 +1234,20 @@ async function followStatus(config: ClientConfig, target: string, commit: string
         "env", "SHIBUMI_SKIP_UPDATE_CHECK=1", SERVER_CLI, "status", config.appId, "--json",
       ], { allowFailure: true });
       if (current.exitCode === 0 && current.stdout.trim() && current.stdout.trim() !== "null") {
-        const status = JSON.parse(current.stdout) as DeployStatus;
+        const status = parseDeployStatus(JSON.parse(current.stdout))!;
         if (status.queuedCommit && status.queuedCommit !== commit) {
-          progress.error(`Queued commit replaced by ${status.queuedCommit.slice(0, 7)}`);
+          progress.stop(`Queued commit replaced by ${status.queuedCommit.slice(0, 7)}`, 1);
           throw new Error(`deployment ${commit.slice(0, 7)} was superseded by newer commit ${status.queuedCommit.slice(0, 7)}.\n\nNext: pull latest changes before shipping again.`);
         }
       }
     }
     if (!lastStage && Date.now() >= webhookDeadline) {
-      progress.error("Webhook did not start deployment");
+      progress.stop("Webhook did not start deployment", 1);
       throw new Error(`GitHub webhook did not reach shibumi-server.\n\nNext: check https://github.com/${config.repository.slice("github:".length)}/settings/hooks, then rerun bun ship after repairing delivery.`);
     }
     await Bun.sleep(2_000);
   }
-  progress.error("Deployment status timed out");
+  progress.stop("Deployment status timed out", 1);
   throw new Error(`deployment may still be running. Check: ssh ${target} shibumi-server status ${config.appId}`);
 }
 
@@ -1143,6 +1298,53 @@ async function showLogs(): Promise<void> {
   }
 }
 
+export function parseDeployStatus(value: unknown): DeployStatus | undefined {
+  if (value === null) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("deployment status is invalid");
+  const status = value as Partial<DeployStatus>;
+  if (typeof status.commit !== "string" || !COMMIT.test(status.commit)
+    || !["accepted", "running", "succeeded", "failed"].includes(status.state ?? "")
+    || typeof status.stage !== "string" || !/^[a-z][a-z0-9-]{0,63}$/.test(status.stage)
+    || typeof status.updatedAt !== "string" || Number.isNaN(Date.parse(status.updatedAt))
+    || (status.message !== undefined && (typeof status.message !== "string" || status.message.length > 256 || /[\r\n\0]/.test(status.message)))
+    || (status.output !== undefined && (typeof status.output !== "string" || status.output.length > 512 || /[\r\n\0\x1b]/.test(status.output)))
+    || (status.url !== undefined && (typeof status.url !== "string" || status.url.length > 512 || !status.url.startsWith("https://")))
+    || (status.queuedCommit !== undefined && (typeof status.queuedCommit !== "string" || !COMMIT.test(status.queuedCommit)))) {
+    throw new Error("deployment status is invalid");
+  }
+  return status as DeployStatus;
+}
+
+export function deploymentStatusSummary(status: DeployStatus | undefined, localCommit: string, config: Pick<ClientConfig, "domain" | "cutoverRequired">): string {
+  if (!status) return `No deployment status for https://${config.domain}`;
+  return [
+    `Status  ${status.state}`,
+    `Commit  ${status.commit}${status.commit === localCommit ? " (matches HEAD)" : ""}`,
+    status.commit === localCommit ? undefined : `HEAD    ${localCommit}`,
+    `Stage   ${status.stage}${status.message ? `: ${status.message}` : ""}`,
+    status.queuedCommit ? `Queued  ${status.queuedCommit}` : undefined,
+    `Updated ${status.updatedAt}`,
+    config.cutoverRequired && status.state === "succeeded"
+      ? "Traffic previous upstream (Caddy cutover pending)"
+      : `URL     ${status.url ?? `https://${config.domain}`}`,
+  ].filter(Boolean).join("\n");
+}
+
+async function showStatus(): Promise<void> {
+  try {
+    const config = await readConfig();
+    if (!config) throw new Error("Shibumi setup is missing.\n\nNext: run bun ship:setup.");
+    const result = await ssh(await projectTarget(config), [
+      "env", "SHIBUMI_SKIP_UPDATE_CHECK=1", SERVER_CLI, "status", config.appId, "--json",
+    ], { allowFailure: true });
+    if (result.exitCode !== 0) throw new Error(result.stderr.trim() || "deployment status is unavailable");
+    const status = parseDeployStatus(JSON.parse(result.stdout));
+    process.stdout.write(`${deploymentStatusSummary(status, await git("rev-parse", "HEAD"), config)}\n`);
+  } finally {
+    await closeSshControl();
+  }
+}
+
 function portIsBusy(port: number): Promise<boolean> {
   return new Promise((resolveBusy) => {
     const socket = createConnection({ host: "127.0.0.1", port });
@@ -1151,6 +1353,21 @@ function portIsBusy(port: number): Promise<boolean> {
     socket.once("timeout", () => { socket.destroy(); resolveBusy(false); });
     socket.once("error", () => resolveBusy(false));
   });
+}
+
+export function formatDevStartup(port: number, domain: string, time: string, color = false): string {
+  const paint = (code: string, value: string) => color ? `\x1b[${code}m${value}\x1b[0m` : value;
+  const row = (label: string, url: string) => `${paint("2", "┃")} ${label.padEnd(8)} ${paint("34", url)}`;
+  return [
+    `${paint("38;5;208", "渋み")}  ship dev`,
+    row("Local", `http://localhost:${port}/`),
+    row("Remote", `https://${domain}`),
+    `${paint("2", time)} starting app dev server...`,
+  ].join("\n");
+}
+
+function localTime(date = new Date()): string {
+  return [date.getHours(), date.getMinutes(), date.getSeconds()].map((value) => String(value).padStart(2, "0")).join(":");
 }
 
 async function runDev(): Promise<void> {
@@ -1174,7 +1391,7 @@ async function runDev(): Promise<void> {
     while (await portIsBusy(config.port) && Date.now() < deadline) await Bun.sleep(100);
     if (await portIsBusy(config.port)) throw new Error(`Port ${config.port} did not stop.\n\nNext: stop PID ${pids.join(", ")} manually, then run bun dev again.`);
   }
-  log.info(`Local  http://127.0.0.1:${config.port}\nRemote https://${config.domain}`);
+  process.stdout.write(`${formatDevStartup(config.port, config.domain, localTime(), supportsTerminalColor())}\n`);
   const child = Bun.spawn([process.execPath, "run", "dev:app"], {
     cwd: root,
     env: { ...process.env, PORT: String(config.port), SHIBUMI_PORT: String(config.port) },
@@ -1195,7 +1412,7 @@ async function rollbackShip(): Promise<void> {
       "env", "SHIBUMI_SKIP_UPDATE_CHECK=1", SERVER_CLI, "status", config.appId, "--json",
     ], { allowFailure: true });
     if (status.exitCode === 0 && status.stdout.trim() && status.stdout.trim() !== "null") {
-      const current = JSON.parse(status.stdout) as DeployStatus;
+      const current = parseDeployStatus(JSON.parse(status.stdout))!;
       if (current.state === "accepted" || current.state === "running") {
         throw new Error(`Deployment ${current.commit?.slice(0, 7) ?? ""} is still ${current.state}.\n\nNext: wait for it to finish, then retry bun ship --rollback.`);
       }
@@ -1211,7 +1428,7 @@ async function rollbackShip(): Promise<void> {
       "env", "SHIBUMI_SKIP_UPDATE_CHECK=1", SERVER_CLI, "rollback", config.appId, "--yes",
     ], { allowFailure: true });
     if (rollback.exitCode !== 0) {
-      progress.error("Rollback failed");
+      progress.stop("Rollback failed", 1);
       throw new Error(rollback.stderr.trim() || rollback.stdout.trim() || "server rollback failed");
     }
     progress.stop(`Rolled back in ${formatDuration(Date.now() - startedAt)}`);
@@ -1236,16 +1453,13 @@ export async function runShip(): Promise<void> {
         : `${accent("Next:")} bun ship`);
       return;
     }
+    const compose = await localBuildFrontend(result.config);
     const estimateMs = await estimatedDeployDuration(result.config, result.target);
     const startedAt = Date.now();
     const ahead = await preflight(result.config);
-    if (!await approve(shipConfirmation(result.config.deploymentMode, ahead, result.config.branch, result.config.domain))) {
-      cancel("Ship cancelled");
-      return;
-    }
     const commit = await git("rev-parse", "HEAD");
     if (!COMMIT.test(commit)) throw new Error("cannot determine shipped commit");
-    await buildAndUpload(result.config, result.target, commit);
+    await buildAndUpload(result.config, result.target, commit, compose);
     if (ahead > 0) await run(["git", "push", "origin", result.config.branch], { inherit: true });
     if (shouldTriggerRedeploy(result.config.trigger, ahead)) {
       const redeploy = await ssh(result.target, [
@@ -1256,7 +1470,7 @@ export async function runShip(): Promise<void> {
           "env", "SHIBUMI_SKIP_UPDATE_CHECK=1", SERVER_CLI, "status", result.config.appId, "--commit", commit, "--json",
         ], { allowFailure: true });
         const status = current.exitCode === 0 && current.stdout.trim() && current.stdout.trim() !== "null"
-          ? JSON.parse(current.stdout) as DeployStatus
+          ? parseDeployStatus(JSON.parse(current.stdout))
           : undefined;
         if (!canFollowDeployment(status, commit)) throw new Error(redeploy.stderr.trim() || "redeploy request failed");
         log.info("Deployment already running for this commit. Following its progress.");
@@ -1279,7 +1493,7 @@ export function immutableShipSource(source: string): string | undefined {
 }
 
 export function shouldCheckForShipUpdate(value: ShipOptions): boolean {
-  return !(value.setup || value.update || value.rollback || value.logs || value.dev);
+  return !(value.setup || value.update || value.rollback || value.logs || value.status || value.dev);
 }
 
 async function runLatestShipClient(args: string[]): Promise<boolean> {
@@ -1391,6 +1605,7 @@ export function runShipCli(): void {
   const action = options.update ? updateShipClient()
     : options.rollback ? rollbackShip()
     : options.logs ? showLogs()
+    : options.status ? showStatus()
     : options.dev ? runDev()
     : runShip();
   action.catch((error) => {
