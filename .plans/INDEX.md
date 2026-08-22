@@ -14,8 +14,8 @@
 
 ## Recently shipped
 
-- [x] Publish `shibumi-server` 0.7.11 with strict app, repository, revision, source-tree, tag, and platform verification.
-- [x] Add generic Compose identity labels and `bun ship --rebuild` in ship v24.
-- [x] Remove stale exact local upload tags before cached builds in ship v25.
-- [x] Add reviewed automatic ship-client updates after successful deployments in ship v27.
-- [x] Benchmark same-commit server builds versus local prebuilt uploads in `docs/prebuilt-benchmark.md`.
+- [x] Add standalone `server.shibumistack.dev` static site, docs, Markdown agent versions, Dockerfile, Compose, and Bun dev server.
+- [x] Show app health in `shis list`.
+- [x] Limit deploy images to short-lived rollback.
+- [x] Migrate existing Caddy retry budgets safely.
+- [x] Reinstall Caddy helper when retry budget changes.

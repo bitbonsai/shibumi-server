@@ -54,6 +54,13 @@ Create and push matching `v${version}` Git tag at release commit before `npm pub
 - `list` probes every configured internal health URL concurrently, uses green status for healthy responses and red for non-success or unreachable responses, and prints explicit health detail. `remove` uses branded output. Legacy `composeCommand: ["podman"]` config normalizes to `["podman", "compose"]` before deploy or removal. Default app removal deletes Shibumi config, its secret, deployment status, managed Caddy route, and app containers while preserving checkout, volumes, images, and GitHub webhook. Last-app removal stops the service. Caddy removal stays constrained, backed up, validated, reloaded, and rolled back by the root helper.
 - Normal unit tests must fake Git, Podman, and systemd. Real integration tests must use unique disposable projects and clean up.
 
+## Gotchas
+
+- `scripts/dev-site.ts` needs `idleTimeout: 0`: `/__hmr` EventSource idles over Bun.serve's 10-second default and warns.
+- Dev preview does not claim port 9100 from an existing listener. Kill stale PID before starting `bun dev`.
+- Body-copy selectors must exclude label classes directly; `.scope-copy > p:not(.eyebrow,.fine-print)` overrode `.scope-label` font size.
+- Docs Markdown output starts at `docs/`, so images and routes must remain portable between GitHub and `server.shibumistack.dev`.
+
 ## Public versus local
 
 Public files use generic `myapp`/`example.com` examples. Do not add hostnames, usernames, real paths, ports, webhook URLs, or app inventory from a specific installation. Actual configuration belongs outside the checkout.
