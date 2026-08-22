@@ -219,7 +219,7 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}, home = h
   const domain = initial.domain ?? await text({
     message: "Which domain will this app use?",
     placeholder: "example.com",
-    validate: (value) => DOMAIN.test(value) ? undefined : "Use a lowercase public hostname such as example.com",
+    validate: (value) => DOMAIN.test(value ?? "") ? undefined : "Use a lowercase public hostname such as example.com",
   });
   if (cancelled(domain)) return stopSetup();
 
@@ -228,7 +228,7 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}, home = h
     const answer = await text({
       message: "Where's the repository?",
       placeholder: "github:owner/repo or https://github.com/owner/repo",
-      validate: (value) => parseGitHubRepositoryTarget(value) ? undefined : "Use github:owner/repo or a GitHub URL",
+      validate: (value) => parseGitHubRepositoryTarget(value ?? "") ? undefined : "Use github:owner/repo or a GitHub URL",
     });
     if (cancelled(answer)) return stopSetup();
     const target = parseGitHubRepositoryTarget(answer)!;
@@ -358,7 +358,7 @@ async function promptForCaddy(answers: SetupAnswers, yes = false): Promise<Caddy
       message: "Domain aliases (comma-separated, optional)",
       placeholder: suggestedAliases,
       validate: (value) => {
-        const values = value.split(",").map((alias) => alias.trim()).filter(Boolean);
+        const values = (value ?? "").split(",").map((alias) => alias.trim()).filter(Boolean);
         return values.every((alias) => DOMAIN.test(alias) && alias !== answers.domain) ? undefined : "Use public hostnames separated by commas";
       },
     });
@@ -429,7 +429,7 @@ export async function runInteractiveSetup(options: {
     });
     progress.stop(`Installed shibumi-server ${installation.version}`);
   } catch (error) {
-    progress.stop("Installation failed", 1);
+    progress.error("Installation failed");
     throw error;
   }
 
@@ -696,7 +696,7 @@ export async function runInteractiveAdd(options: { home: string; yes?: boolean }
     const publicAddresses = await detectPublicAddresses();
     const dns = await checkDomainDns(initial.domain, publicAddresses);
     if (dns.state === "unknown") {
-      progress.stop("DNS lookup could not be confirmed", 1);
+      progress.error("DNS lookup could not be confirmed");
       cancel([
         `Resolver checks for ${initial.domain} failed after three attempts. No changes were made.`,
         ...dns.errors.map((error) => `  ${error}`),
@@ -706,7 +706,7 @@ export async function runInteractiveAdd(options: { home: string; yes?: boolean }
       return;
     }
     if (dns.state === "missing") {
-      progress.stop("DNS is not configured", 1);
+      progress.error("DNS is not configured");
       const cloudflare = dns.nameservers.some((server) => server.endsWith(".cloudflare.com"));
       cancel([
         `Add DNS for ${initial.domain}, then rerun this command.`,
@@ -771,7 +771,7 @@ export async function runInteractiveAdd(options: { home: string; yes?: boolean }
     });
     progress.stop(`${answers.dryRun ? "Previewed" : existingCaddyMode ? "Already configured" : "Added"} ${answers.domain}`);
   } catch (error) {
-    progress.stop(`Failed to ${action} ${answers.domain}`, 1);
+    progress.error(`Failed to ${action} ${answers.domain}`);
     throw error;
   }
 

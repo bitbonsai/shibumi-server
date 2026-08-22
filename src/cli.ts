@@ -122,7 +122,7 @@ try {
       if (ui) ui.outro(result.updated ? `Updated to shibumi-server ${result.version}` : "No update needed");
       else console.log(result.updated ? `Updated shibumi-server to ${result.version}.` : `shibumi-server ${result.version} is already current.`);
     } catch (error) {
-      progress?.stop("Update failed", 1);
+      progress?.error("Update failed");
       throw error;
     }
   } else if (command.name === "init") {

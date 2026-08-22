@@ -899,11 +899,11 @@ async function preflight(config: ClientConfig): Promise<number> {
   await run(["git", "fetch", "origin", config.branch]);
   const counts = (await git("rev-list", "--left-right", "--count", `HEAD...origin/${config.branch}`)).split(/\s+/).map(Number);
   if (counts[1] > 0) {
-    progress.stop("Branch is behind or diverged", 1);
+    progress.error("Branch is behind or diverged");
     throw new Error(`pull origin/${config.branch} before shipping`);
   }
   if (counts[0] > 0 && await githubBranchIsProtected(config)) {
-    progress.stop(`${config.branch} is protected`, 1);
+    progress.error(`${config.branch} is protected`);
     throw new Error(`Ship cannot push ${counts[0]} local commit${counts[0] === 1 ? "" : "s"} directly to protected branch ${config.branch}.\n\nNext: push a feature branch, merge its pull request, update local ${config.branch}, then run bun ship.`);
   }
   progress.stop(counts[0] > 0
@@ -917,7 +917,7 @@ async function preflight(config: ClientConfig): Promise<number> {
     check.start(`Running bun run ${name}`);
     const result = await run(["bun", "run", name], { allowFailure: true });
     if (result.exitCode !== 0) {
-      check.stop(`${name} failed`, 1);
+      check.error(`${name} failed`);
       process.stderr.write(result.stderr || result.stdout);
       throw new Error(`bun run ${name} failed`);
     }
@@ -995,7 +995,7 @@ async function buildAndUpload(config: ClientConfig, target: string, commit: stri
     progress.stop(`Built and uploaded ${commit.slice(0, 7)} (${Math.ceil(archiveBytes / 1024 ** 2)} MiB, ${imageId?.replace(/^sha256:/, "").slice(0, 12) || "unknown digest"})`);
     await run(["docker", "image", "rm", image], { allowFailure: true });
   } catch (error) {
-    progress.stop("Prebuilt image failed", 1);
+    progress.error("Prebuilt image failed");
     throw error;
   } finally {
     await rm(temporary, { recursive: true, force: true });
@@ -1053,7 +1053,7 @@ async function followStatus(config: ClientConfig, target: string, commit: string
         return;
       }
       if (!queued && status.state === "failed") {
-        progress.stop(`Deployment failed during ${status.stage ?? "unknown"}`, 1);
+        progress.error(`Deployment failed during ${status.stage ?? "unknown"}`);
         throw new Error(`${[status.message ?? "deployment failed", status.output].filter(Boolean).join("\n")}\n\nNext: run bun ship:logs.`);
       }
     } else if (lastStage) {
@@ -1069,7 +1069,7 @@ async function followStatus(config: ClientConfig, target: string, commit: string
           return;
         }
         if (terminal?.state === "failed") {
-          progress.stop(`Deployment failed during ${terminal.stage ?? "unknown"}`, 1);
+          progress.error(`Deployment failed during ${terminal.stage ?? "unknown"}`);
           throw new Error(`deployment failed during ${terminal.stage ?? "unknown"}.\n\nNext: run bun ship:logs.`);
         }
       }
@@ -1081,18 +1081,18 @@ async function followStatus(config: ClientConfig, target: string, commit: string
       if (current.exitCode === 0 && current.stdout.trim() && current.stdout.trim() !== "null") {
         const status = JSON.parse(current.stdout) as DeployStatus;
         if (status.queuedCommit && status.queuedCommit !== commit) {
-          progress.stop(`Queued commit replaced by ${status.queuedCommit.slice(0, 7)}`, 1);
+          progress.error(`Queued commit replaced by ${status.queuedCommit.slice(0, 7)}`);
           throw new Error(`deployment ${commit.slice(0, 7)} was superseded by newer commit ${status.queuedCommit.slice(0, 7)}.\n\nNext: pull latest changes before shipping again.`);
         }
       }
     }
     if (!lastStage && Date.now() >= webhookDeadline) {
-      progress.stop("Webhook did not start deployment", 1);
+      progress.error("Webhook did not start deployment");
       throw new Error(`GitHub webhook did not reach shibumi-server.\n\nNext: check https://github.com/${config.repository.slice("github:".length)}/settings/hooks, then rerun bun ship after repairing delivery.`);
     }
     await Bun.sleep(2_000);
   }
-  progress.stop("Deployment status timed out", 1);
+  progress.error("Deployment status timed out");
   throw new Error(`deployment may still be running. Check: ssh ${target} shibumi-server status ${config.appId}`);
 }
 
@@ -1211,7 +1211,7 @@ async function rollbackShip(): Promise<void> {
       "env", "SHIBUMI_SKIP_UPDATE_CHECK=1", SERVER_CLI, "rollback", config.appId, "--yes",
     ], { allowFailure: true });
     if (rollback.exitCode !== 0) {
-      progress.stop("Rollback failed", 1);
+      progress.error("Rollback failed");
       throw new Error(rollback.stderr.trim() || rollback.stdout.trim() || "server rollback failed");
     }
     progress.stop(`Rolled back in ${formatDuration(Date.now() - startedAt)}`);

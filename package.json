@@ -63,6 +63,6 @@
     "typescript": "latest"
   },
   "dependencies": {
-    "@clack/prompts": "^0.7.0"
+    "@clack/prompts": "^1.7.0"
   }
 }
