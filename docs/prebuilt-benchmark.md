@@ -68,6 +68,6 @@ Same-commit result:
 
 ## Caveats
 
-These are pilot measurements, not a broad benchmark. Local and server build caches were warm. Pilot A baseline was a historical estimate rather than a same-commit run. Pilot B is a controlled same-commit comparison, but contains one measured run per mode. Network speed affects full-image SSH upload time. Memory sampling may miss spikes shorter than 200ms.
+These are pilot measurements, not a general benchmark. Both build caches were warm. Pilot A compares against a historical estimate. Pilot B uses the same commit, but has only one run per mode. Network speed affects SSH upload time, and 200ms sampling may miss shorter memory spikes.
 
-The useful result is not raw speed. Image construction moved off the 4 GB VPS, while the server kept verification, replacement, health, and rollback.
+The main result is where the work happened. The Mac built the image; the 4 GB VPS still handled verification, replacement, health checks, and rollback.

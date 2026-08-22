@@ -33,6 +33,13 @@ describe("documentation site", () => {
     expect(architecture).toContain('<span class="syntax-key">services</span>');
   });
 
+  test("sets one theme icon before first paint", async () => {
+    const themeSetup = 'document.documentElement.dataset.theme=(t==="light"||t==="dark")';
+    expect(await readFile("dist/index.html", "utf8")).toContain(themeSetup);
+    expect(await readFile("dist/docs/index.html", "utf8")).toContain(themeSetup);
+    expect(await readFile("dist/styles.css", "utf8")).toContain(".theme-toggle .icon-moon { display:none; }");
+  });
+
   test("uses standalone install URL", async () => {
     expect(await readFile("dist/docs/install.md", "utf8")).toContain("https://server.shibumistack.dev/install");
   });

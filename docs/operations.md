@@ -6,7 +6,7 @@
 shis list
 ```
 
-Shows domain, app ID, repository, loopback upstream, checkout, and Caddy ownership.
+Shows domain, app ID, repository, loopback upstream, checkout, Caddy ownership, and current health result for every app.
 
 ## Latest status
 
@@ -20,7 +20,7 @@ Machine-readable status:
 shis status example-com --commit <full-sha> --json
 ```
 
-Status is the latest snapshot for one app. Use [history](/docs/history-rollback) for recent durable records.
+Status is the latest snapshot for one app. [History](/docs/history-rollback) keeps the latest 100 durable records.
 
 ## Update
 
@@ -28,7 +28,7 @@ Status is the latest snapshot for one app. Use [history](/docs/history-rollback)
 shis update
 ```
 
-User-run commands check npm with a short timeout and suggest an update when a newer stable release exists. Registry failures never block local work. Update installs the exact reported version, keeps config and secrets, moves the local release link, and reloads the service.
+User-run commands check npm with a short timeout and suggest an update when a newer stable release exists. Registry failures do not block the command. Update installs the reported version, keeps config and secrets, moves the local release link, and reloads the service.
 
 ## Remove an app
 

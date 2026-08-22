@@ -1,8 +1,28 @@
-# shis commands
+# Commands
 
-Installed command is `shis`. `shibumi-server` remains an alias.
+## Project client
 
-## Setup
+Run these commands from a connected project:
+
+```text
+bun dev                         Run the app locally on its assigned Shibumi port
+bun ship                        Build, upload, and deploy committed HEAD
+bun ship --rebuild              Ship without Docker layer cache
+bun ship -y                     Accept routine ship confirmations
+bun ship:setup                  Register or reconfigure the project
+bun ship:update                 Review and install the current Ship client
+bun ship:status                 Compare server status with local HEAD
+bun ship:logs                   Read the latest bounded deployment log
+bun ship --rollback             Restore the retained previous image
+```
+
+`bun dev` runs the project's original development command, stored as `dev:app`, with `PORT` and `SHIBUMI_PORT` set to the registered app port.
+
+## Server CLI
+
+Use `shis` on the VPS. `shibumi-server` remains an alias.
+
+### Setup
 
 ```text
 shis                              Guided installation
@@ -12,7 +32,7 @@ shis update                       Install latest stable release
 shis uninstall [--purge] [--yes]
 ```
 
-## Apps
+### Apps
 
 ```text
 shis list
@@ -36,7 +56,7 @@ shis add <domain> \
   [-- <test-command...>]
 ```
 
-## Deploys
+### Deploys
 
 ```text
 shis status <app-id> [--commit <full-sha>] [--json]
@@ -52,7 +72,7 @@ shis caddy-refresh <app-id>
 
 Rollback restores the one previous image kept for up to 12 hours and checks its health without building.
 
-## Client handoff
+### Client handoff
 
 ```text
 shis client-config <app-id> [--server-hostname <host>]
@@ -61,7 +81,7 @@ shis webhook-secret <app-id>
 
 `client-config` prints commit-safe JSON. `webhook-secret` prints secret JSON only for explicit SSH handoff.
 
-## Service commands
+### Service commands
 
 ```text
 shis check --config <path>

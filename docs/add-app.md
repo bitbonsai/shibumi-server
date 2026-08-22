@@ -1,10 +1,10 @@
 # Add an app from the server
 
-This path is for server operators and automation. Most people should start from the [local project](/docs/ship), which runs the same registration over SSH and then sets up deployment.
+Use this path for server-side setup or automation. For normal app setup, start from the [local project](/docs/ship). Ship runs this registration over SSH and configures deployment afterward.
 
 ## Before you start
 
-The repository needs a Compose file and a service with a loopback health endpoint. Point the domain at the server, directly or through Cloudflare.
+The repository needs a Compose file and a service with a loopback health endpoint. Point the domain at the server, directly or through Cloudflare. For a proxied Cloudflare record, use **Full (strict)** SSL/TLS mode so Cloudflare verifies Caddy's origin certificate.
 
 ## Preview without changing the server
 
@@ -12,7 +12,7 @@ The repository needs a Compose file and a service with a loopback health endpoin
 shis add example.com --dry-run
 ```
 
-Dry run checks DNS and Caddy, asks the normal questions, picks a port, and validates the checkout. It does not write config or secrets, run sudo, or change Caddy and systemd.
+Dry run follows the normal setup path: DNS and Caddy checks, prompts, port selection, and checkout validation. It does not write config or secrets, run sudo, or change Caddy or systemd.
 
 ## Register the app
 
@@ -68,4 +68,4 @@ Shibumi passes test arguments directly to the container. It does not build a she
 
 ## Running setup again
 
-Repeating the same registration keeps the checkout, webhook secret, and Caddy config, then restarts the service. Conflicting settings stop with an error instead of overwriting the app.
+Running the same registration again keeps the checkout, webhook secret, and Caddy config, then restarts the service. Conflicting settings fail instead of overwriting the app.

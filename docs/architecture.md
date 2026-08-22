@@ -1,6 +1,6 @@
 # Architecture
 
-`shibumi-server` receives a signed webhook and replaces an app with the image that `bun ship` uploaded from the same commit.
+`shibumi-server` replaces an app with the image built from one verified commit. `bun ship` can start deployment over SSH, or a signed GitHub webhook can start it after a push.
 
 ## Request flow
 
@@ -8,9 +8,10 @@
 Ship checks committed work
   → Docker builds the server-platform image from a Git archive
   → Ship uploads the exact commit tag over SSH
-  → Git push sends an HTTPS webhook
-  → Caddy proxies it to loopback
-  → shibumi-server verifies signature, repository, and branch
+  → Ship pushes Git
+  → direct mode requests deployment over SSH
+    or GitHub-push mode sends a signed webhook through Caddy
+  → shibumi-server verifies the request, repository, and branch
   → the server fetches the exact commit
   → Podman verifies image labels, Git tree, tag, and platform
   → optional app tests run in a temporary container
@@ -23,7 +24,7 @@ Only Caddy listens publicly. The receiver binds to loopback.
 
 ## Trust boundary
 
-A valid webhook lets repository code, or its uploaded image, run as the deployment Unix user. Give that user only the apps it should deploy. Rootless Podman keeps those containers separate from root.
+A verified deployment request lets repository code, or its uploaded image, run as the deployment Unix user. Give that user access only to apps it should deploy. Rootless Podman keeps the containers separate from root.
 
 The receiver never runs text from a webhook. Repository, branch, checkout, Compose service, tests, and port come from local config. Webhook values are matched against that config, and commands use argument arrays without a shell.
 
@@ -96,7 +97,7 @@ services:
           memory: 512M
 ```
 
-These checks are defense in depth. They do not replace filesystem quotas, monitoring, backups, or testing on another host.
+These checks limit routine failures. They do not replace filesystem quotas, monitoring, backups, or tests on another host.
 
 ## Image cleanup
 
@@ -131,7 +132,7 @@ Do not commit webhook secrets, app keys, repository credentials, registry creden
 
 ## Installation
 
-The first release targets Bun and a systemd user service. `install.sh` installs Bun when missing, then hands setup to `bunx shibumi-server@latest`. Direct `bunx shibumi-server@<version> init` remains the fixed automation path.
+Installation targets Bun and a systemd user service. `install.sh` installs Bun when missing, then hands setup to `bunx shibumi-server@latest`. Automation can pin the package with `bunx shibumi-server@<version> init`.
 
 Initialization stages the exact invoked package, installs locked production dependencies with lifecycle scripts disabled, updates the local `current` link and `shis` launchers, writes mode-`0600` config and secret files, and writes the user unit. Startup, restart, and app registration use that local copy. They never download through `bunx`. Re-running `init` keeps machine-owned files and moves the service to the invoked version.
 

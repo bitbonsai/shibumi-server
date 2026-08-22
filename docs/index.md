@@ -8,14 +8,14 @@ Install `shis` on a Linux server. Connect a project. Ship the image you built on
 2. [Connect your project](/docs/ship) from its Git root.
 3. Run `bun ship` to deploy.
 
-Prefer to work on the server? [Register the app there](/docs/add-app).
+For server-side setup or automation, [register the app with `shis add`](/docs/add-app).
 
-## What happens during a deploy
+## Deploy and operate
 
-- [Deployments](/docs/deployments) covers local builds, server checks, health checks, and replacement.
-- [History and rollback](/docs/history-rollback) covers deployment records and the 12-hour rollback window.
-- [Operations](/docs/operations) covers status, updates, removal, logs, and uninstall.
-- [Security model](/docs/security) explains which data Shibumi trusts and where it stores secrets.
+- [Deployments](/docs/deployments) traces the image from local build through server health check.
+- [History and rollback](/docs/history-rollback) explains deployment records and the 12-hour rollback window.
+- [Operations](/docs/operations) lists status, update, removal, log, and uninstall commands.
+- [Security model](/docs/security) defines trust boundaries and secret storage.
 
 ## Reference
 

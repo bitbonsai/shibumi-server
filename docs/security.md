@@ -26,7 +26,7 @@ Ship builds only committed `HEAD` and labels the image with app ID, repository, 
 
 ## Resource isolation
 
-Memory and disk floors stop deployment before it can exhaust the host. Client builds keep production CPU and memory available. Server builds have a deadline. systemd sets memory, swap, CPU, and process limits for the receiver and its children. Rootless Podman keeps app containers under the deployment user. Compose should set per-app limits and bind app ports to loopback.
+Deployment stops when available memory or disk falls below its configured floor. Local builds keep image construction off the VPS. Server builds have a deadline. systemd limits memory, swap, CPU, and processes for the receiver and its children. Rootless Podman runs app containers under the deployment user. Compose should add per-app limits and bind app ports to loopback.
 
 ## Remaining limits
 

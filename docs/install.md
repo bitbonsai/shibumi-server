@@ -19,7 +19,7 @@ The installer adds Bun if it is missing. On macOS or Windows, SSH into the Linux
 curl -fsSL https://server.shibumistack.dev/install | bash
 ```
 
-The installer checks the host before writing anything. It finds a working Compose command, installs one fixed npm release with its production lockfile, and disables lifecycle scripts. It adds both command names:
+The installer checks the host before writing anything. It finds a working Compose command, installs one exact npm version from its production lockfile, and disables lifecycle scripts. It adds both command names:
 
 ```text
 ~/.local/bin/shis
@@ -57,4 +57,4 @@ A new install has no apps. Continue with [Connect project](/docs/ship), or use [
 shis update
 ```
 
-Update installs that exact version and reuses the existing setup. It keeps config, secrets, checkouts, and running apps. A slow or unavailable npm registry does not block other commands. `shis serve` never checks npm.
+Update installs that exact version through the existing setup. Config, secrets, checkouts, and running apps stay in place. A slow or unavailable npm registry does not block other commands. `shis serve` never checks npm.

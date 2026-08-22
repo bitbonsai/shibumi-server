@@ -1,6 +1,6 @@
 # Deployments
 
-`bun ship` builds the committed image on your computer. The server starts that same image after the signed GitHub webhook arrives.
+`bun ship` builds committed `HEAD` on your computer and uploads that exact image. Direct mode starts deployment over SSH. GitHub-push mode waits for the signed webhook.
 
 ## Client pipeline
 
@@ -11,8 +11,9 @@
 5. Build for the server's Linux platform with Docker layer cache.
 6. Label the image with app ID, repository, full commit, Git tree, and platform.
 7. Upload the commit-tagged image over SSH.
-8. Push Git, or ask for redeploy when that commit is already pushed.
-9. Follow server status over SSH.
+8. Push Git. If the commit is already remote, request a redeploy instead.
+9. Start deployment directly or wait for its GitHub webhook.
+10. Follow server status over SSH.
 
 Upload happens before Git push, so the webhook cannot race a missing image. `bun ship --rebuild` disables cache without changing image identity.
 
@@ -20,7 +21,7 @@ Upload happens before Git push, so the webhook cannot race a missing image. `bun
 
 The receiver checks route, method, content type, GitHub event, delivery UUID, and signature shape before reading the full body. It then enforces body size, verifies the HMAC, parses the payload, and matches repository, branch, and commit SHA.
 
-A duplicate verified delivery gets acknowledged without another deploy. One deploy runs per app. A newer verified push waits in a persistent latest-wins slot; another newer push replaces it. Queue state survives service restart.
+The receiver acknowledges a duplicate verified delivery without deploying it again. Each app runs one deploy at a time. One newer push can wait in a persistent slot; a later push replaces the queued commit. Queue state survives service restart.
 
 ## Server pipeline
 

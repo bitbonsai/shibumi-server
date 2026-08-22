@@ -1,6 +1,6 @@
 # Connect a project
 
-Each project owns its deployment setup: a checked-in `scripts/ship.ts` client and a commit-safe `shibumi-server.json` file.
+Ship adds two tracked files to the project: `scripts/ship.ts` runs deployments, and `shibumi-server.json` stores public app settings.
 
 ## Add Ship to the project
 
@@ -30,12 +30,12 @@ Use the `user@server` target or SSH alias you already use. Password login works.
 bun ship:setup --server user@server
 ```
 
-SSH targets stay in `~/.config/shibumi/config.json`, or `$XDG_CONFIG_HOME/shibumi/config.json`, with mode `0600`. They are not committed. Projects with one saved server reuse it; projects with several saved servers show a picker. Setup runs `~/.local/bin/shibumi-server` remotely and writes only sanitized project config.
+SSH targets stay in `~/.config/shibumi/config.json`, or `$XDG_CONFIG_HOME/shibumi/config.json`, with mode `0600`. They are not committed. Projects with one saved server reuse it; projects with several saved servers show a picker. Setup runs `~/.local/bin/shibumi-server` remotely, then writes public settings to `shibumi-server.json`.
 
 Choose **Run bun ship** or **Deploy every GitHub push**.
 
-- **Run bun ship** builds locally, uploads the image, and asks the server to deploy over SSH. If GitHub CLI is signed in, setup disables the matching webhook. GitHub access never blocks shipping.
-- **Deploy every GitHub push** switches the server to build mode and creates, repairs, enables, and tests the webhook. Its secret stays in memory and on the server.
+- **Run bun ship** builds locally, uploads the image, and starts deployment over SSH. If GitHub CLI is signed in, setup disables the matching webhook. Direct shipping still works when `gh` is not signed in.
+- **Deploy every GitHub push** switches the server to build mode, then creates or repairs the webhook and tests delivery. Its secret stays in memory and on the server.
 
 The committed `shibumi-server.json` has the deployment trigger, app ID, repository, branch, webhook URL, service, app port, health path, and server hostname. It has no secrets, checkout paths, SSH users, aliases, or credentials.
 
@@ -84,7 +84,7 @@ Change the SSH target with `git config --local shibumi.server user@server`.
 
 ## Update the client
 
-Before each deploy, Ship checks the mutable latest pointer against its reviewed immutable source. When a newer client exists, it offers to run that version now. After a successful deployment, it updates tracked `scripts/ship.ts` and leaves the change unstaged for review. `bun ship -y` accepts that update automatically.
+Before each deploy, Ship compares the latest client with the fixed version named in `scripts/ship.ts`. When a newer client exists, it offers to use it for that run. After a successful deployment, Ship writes the reviewed client to `scripts/ship.ts` and leaves the change unstaged. `bun ship -y` accepts the update automatically.
 
 Network failures keep the current client. Unknown local edits are never overwritten. Server setup, webhook, SSH target, and `shibumi-server.json` stay unchanged.
 
