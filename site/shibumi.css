@@ -98,7 +98,7 @@ main a:not(.btn):not(.button):focus-visible {
 
 /* ---- header / nav ---- */
 
-header,
+.shell > header,
 .site-header {
     position: fixed;
     top: 0;
@@ -113,7 +113,7 @@ header,
     transform: translateX(-50%);
 }
 
-header::before,
+.shell > header::before,
 .site-header::before {
     content: "";
     position: fixed;
