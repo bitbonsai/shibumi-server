@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+dist
+test
+.env
+.env.*
+config.json
+secrets.env
+state.json
+*.log
+.DS_Store

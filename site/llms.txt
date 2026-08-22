@@ -1,0 +1,25 @@
+# shibumi-server
+
+> Small deployment service for exact locally built images on a Linux VPS using rootless Podman Compose, Caddy, and systemd.
+
+Canonical site: https://server.shibumistack.dev
+Source: https://github.com/bitbonsai/shibumi-server
+
+## Documentation
+
+- [Documentation index](/docs/index.md): installation path and documentation map.
+- [Install shibumi-server](/docs/install.md): host requirements, installer, verification, and updates.
+- [Add an app](/docs/add-app.md): server-side registration and dry run.
+- [Connect project](/docs/ship.md): project-owned Ship setup and local prebuilt deployment.
+- [Deployments](/docs/deployments.md): client and server pipelines, checks, health, and resource defaults.
+- [History and rollback](/docs/history-rollback.md): bounded records and 12-hour rollback retention.
+- [Operations](/docs/operations.md): status, updates, removal, uninstall, and service logs.
+- [Security model](/docs/security.md): webhook, secret, image, Caddy, and resource trust boundaries.
+- [Command reference](/docs/commands.md): `shis` commands and options.
+- [Architecture](/docs/architecture.md): full request, checkout, image, cutover, and installation design.
+- [Prebuilt benchmark](/docs/prebuilt-benchmark.md): measured pilot results and caveats.
+
+## Project
+
+- [README](/index.md)
+- [Install script](/install)

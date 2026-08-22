@@ -1,7 +1,7 @@
 {
   "name": "shibumi-server",
   "version": "0.10.6",
-  "description": "Small, secure webhook deploy service for rootless Podman.",
+  "description": "Deploy apps to a Linux VPS with rootless Podman.",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -10,13 +10,14 @@
   },
   "exports": "./src/index.ts",
   "scripts": {
+    "dev": "bun scripts/dev-site.ts",
     "start": "bun src/cli.ts serve",
     "test": "bun test",
     "check": "tsc --noEmit",
+    "build:site": "bun scripts/build-site.ts",
     "pack:check": "npm pack --dry-run",
     "preview:ui": "bun scripts/preview-ui.ts",
-    "prepublishOnly": "bun test && bun run check",
-    "postpublish": "bun scripts/sync-website-version.ts"
+    "prepublishOnly": "bun test && bun run check"
   },
   "files": [
     "bin",
@@ -29,9 +30,9 @@
     "runtime-lock.json"
   ],
   "engines": {
-    "bun": ">=1.2.0"
+    "bun": ">=1.4.0"
   },
-  "homepage": "https://shibumistack.dev",
+  "homepage": "https://server.shibumistack.dev",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bitbonsai/shibumi-server.git"

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>shibumi-server: deploy apps to your VPS</title>
+  <meta name="description" content="Build an app on your computer, send it to your VPS, and keep the previous image for rollback.">
+  <meta name="theme-color" content="#f5f0e4">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://server.shibumistack.dev/">
+  <meta property="og:title" content="shibumi-server: deploy apps to your VPS">
+  <meta property="og:description" content="Build an app on your computer, send it to your VPS, and keep the previous image for rollback.">
+  <link rel="canonical" href="https://server.shibumistack.dev/">
+  <link rel="alternate" type="text/markdown" href="/index.md" title="Markdown source">
+  <link rel="stylesheet" href="/styles.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("shibumi-theme")||""}catch{}</script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="mark" href="#top" aria-label="shibumi-server home">
+      <svg class="mark-logo" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12.5 10H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v2"/><path d="M16 12h6"/><path d="M19 9v6"/><path d="M22 18v2a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h8.5"/><path d="M6 18h.01"/><path d="M6 6h.01"/></svg>
+      <span>shibumi<span class="mark-tld"> server</span></span>
+    </a>
+    <nav aria-label="Primary">
+      <a href="#how">About</a>
+      <a href="#vps">VPS</a>
+      <a href="/docs">Docs</a>
+      <details class="stack-menu">
+        <summary>Shibumi Stack</summary>
+        <div class="stack-popover">
+          <a href="https://shibumistack.dev"><span>Stack</span><small>Build and ship Bun apps</small></a>
+          <a href="https://forms.shibumistack.dev"><span>Forms</span><small>Collect form submissions</small></a>
+          <a href="https://server.shibumistack.dev" aria-current="page"><span>Server</span><small>Deploy to your VPS</small></a>
+        </div>
+      </details>
+      <a class="nav-icon" href="https://github.com/bitbonsai/shibumi-server" aria-label="Source on GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.56 9.56 0 0 1 12 6.82a9.5 9.5 0 0 1 2.5.34c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.86V21c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg></a>
+      <button class="theme-toggle" type="button" aria-label="Toggle color theme"><svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg><svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Self-hosted deploys</p>
+        <h1>Ship,<br><em>done.</em></h1>
+        <p class="lede">Build on your computer. Run that exact image on your VPS.</p>
+        <div class="actions">
+          <a class="button primary" href="#install">Install v{{version}}</a>
+          <a class="button" href="https://github.com/bitbonsai/shibumi-server"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.56 9.56 0 0 1 12 6.82a9.5 9.5 0 0 1 2.5.34c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.86V21c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg>Read source</a>
+        </div>
+      </div>
+
+      <div class="terminal" data-server-cli aria-label="Example deployment output">
+        <div class="terminal-command"><span>›</span><code><span data-server-typed></span><span class="typing-cursor" data-server-cursor aria-hidden="true"></span></code><button class="terminal-replay" type="button" aria-label="Replay terminal animation" title="Replay animation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg></button></div>
+        <svg class="clack-symbols" aria-hidden="true"><defs><symbol id="clack-elbow" viewBox="0 0 16 20"><path d="M8 10h8"/></symbol><symbol id="clack-diamond" viewBox="0 0 16 20"><path d="m8 4 6 6-6 6-6-6Z"/></symbol></defs></svg>
+        <div class="clack-output">
+          <span class="clack-rail" aria-hidden="true"></span>
+          <div class="clack-row clack-brand deploy-step"><svg class="clack-glyph"><use href="#clack-elbow"/></svg><strong>渋み&nbsp; ship</strong></div>
+          <div class="clack-row deploy-step"><svg class="clack-glyph clack-success clack-filled"><use href="#clack-diamond"/></svg><span>1 commit ready to push</span></div>
+          <div class="clack-row deploy-step"><svg class="clack-glyph clack-success clack-filled"><use href="#clack-diamond"/></svg><span>test passed</span></div>
+          <div class="clack-row deploy-step"><svg class="clack-glyph clack-success clack-filled"><use href="#clack-diamond"/></svg><span>check passed</span></div>
+          <div class="clack-row deploy-step"><svg class="clack-glyph clack-success clack-filled"><use href="#clack-diamond"/></svg><span>Built and uploaded a1b2c3d (3 MiB)</span></div>
+          <div class="clack-row deploy-step"><svg class="clack-glyph clack-success clack-filled"><use href="#clack-diamond"/></svg><span>Replacement healthy in 812ms</span></div>
+          <div class="clack-row clack-done deploy-step"><svg class="clack-glyph"><use href="#clack-elbow"/></svg><span><strong>Shipped in 15 seconds</strong><a href="https://example.com">https://example.com</a></span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="scope" id="vps" aria-labelledby="scope-title">
+      <div class="scope-copy">
+        <p class="scope-label"><span>Scope today</span><strong>VPS deployment only</strong></p>
+        <h2 id="scope-title">A small Linux server will do.</h2>
+        <p>Connect over SSH. Caddy handles public traffic while each app listens on loopback.</p>
+
+        <div class="storage-math" aria-label="Image storage summary">
+          <div><strong>2 images</strong><span>maximum per app</span></div>
+          <div><strong>12 hours</strong><span>rollback retention</span></div>
+          <div><strong>4 GiB</strong><span>default free-space floor</span></div>
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table storage-table">
+            <caption>Example image storage by workload</caption>
+            <thead><tr><th>Workload</th><th>Current</th><th>With rollback</th><th>Image contents</th></tr></thead>
+            <tbody>
+              <tr><th>Static site</th><td>~6.2 MB</td><td>~12.4 MB</td><td>BusyBox and built site files. About 3 MB compressed.</td></tr>
+              <tr><th>Small Bun service</th><td>~80–150 MB</td><td>~160–300 MB</td><td>Bun Alpine, production packages, and app source.</td></tr>
+              <tr><th>Full-stack app</th><td>~200–350 MB</td><td>~400–700 MB</td><td>Runtime, packages, built assets, and migrations.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="fine-print">Estimates include the current image and one similar rollback image. Shared layers may use less space. Leave room for the operating system, logs, databases, uploads, and the 4 GiB deployment floor.</p>
+
+        <details class="providers">
+          <summary><span><svg class="panel-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>Compare starter VPS options</span><small>Prices vary by region, tax, and architecture</small></summary>
+          <div class="provider-content">
+            <div class="data-table-wrap">
+              <table class="data-table provider-table">
+                <caption>Starter VPS comparison</caption>
+                <thead><tr><th>Provider</th><th>Starter plan</th><th>vCPU</th><th>RAM</th><th>Disk</th><th>From / month</th></tr></thead>
+                <tbody>
+                  <tr class="recommended"><th><a href="https://www.hetzner.com/cloud/">Hetzner</a><small>Europe first</small></th><td>CX23</td><td>2</td><td>4 GB</td><td>40 GB</td><td>€3.49</td></tr>
+                  <tr><th><a href="https://www.ovhcloud.com/en/vps/">OVHcloud</a><small>Europe + global</small></th><td>VPS-1</td><td>2</td><td>4 GB</td><td>40 GB</td><td>$4.54</td></tr>
+                  <tr><th><a href="https://www.vultr.com/pricing/">Vultr</a><small>Global</small></th><td>Cloud Compute</td><td>1</td><td>1 GB</td><td>25 GB</td><td>$5</td></tr>
+                  <tr><th><a href="https://www.linode.com/pricing/">Akamai Linode</a><small>Global</small></th><td>Nanode</td><td>1</td><td>1 GB</td><td>25 GB</td><td>$5</td></tr>
+                  <tr><th><a href="https://www.digitalocean.com/pricing/droplets">DigitalOcean</a><small>Global</small></th><td>Basic Droplet</td><td>1</td><td>1 GiB</td><td>25 GiB</td><td>$6</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="provider-note">Hetzner's entry plan has room for several small apps. A 1 GB server can run a light prebuilt service, but check its memory use first. Prices vary by location, tax, processor, and billing. Check the final price before ordering.</p>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="how" id="how" aria-labelledby="how-title">
+      <div class="section-heading">
+        <p class="eyebrow">How it works</p>
+        <h2 id="how-title">A deploy, from start to finish.</h2>
+      </div>
+      <ol class="steps">
+        <li><div><h3>Build the commit locally</h3><p><code>bun ship</code> builds committed <code>HEAD</code> for your server, uploads the image, then pushes Git.</p></div></li>
+        <li><div><h3>Replace only after checks pass</h3><p>The image must belong to the commit you pushed. Config and optional tests must pass too. A failure leaves the current app running.</p></div></li>
+        <li><div><h3>Roll back for 12 hours</h3><p>Run <code>bun ship --rollback</code> to restore the previous image. No fetch or rebuild.</p></div></li>
+      </ol>
+    </section>
+
+    <section class="guardrails" aria-label="Operational guardrails">
+      <article><p class="eyebrow">During replacement</p><h3>The current app stays up.</h3><p>Caddy retries its loopback upstream for up to 20 seconds. If startup or health fails, Shibumi restores the previous image.</p></article>
+      <article><p class="eyebrow">On disk</p><h3>Two images per app.</h3><p>One <code>runtime/&lt;app&gt;:current</code> tag and one rollback tag. The rollback expires after 12 hours, even if the service restarts.</p></article>
+    </section>
+
+    <section class="install" id="install" aria-labelledby="install-title">
+      <div>
+        <p class="eyebrow">Linux server</p>
+        <h2 id="install-title">Install shis*.</h2>
+        <p class="shis-note">* shis = shibumi-server.</p>
+        <p>You need <a href="https://bun.sh" target="_blank" rel="noreferrer">Bun</a>, <a href="https://git-scm.com" target="_blank" rel="noreferrer">Git</a>, <a href="https://podman.io" target="_blank" rel="noreferrer">rootless Podman</a>, <a href="https://caddyserver.com" target="_blank" rel="noreferrer">Caddy</a>, and <a href="https://systemd.io" target="_blank" rel="noreferrer">systemd</a>. The installer checks each one and helps with anything missing. Updates keep your settings and secrets.</p>
+      </div>
+      <div class="command-block">
+        <code>curl -fsSL https://server.shibumistack.dev/install | bash</code>
+        <button type="button" data-copy="curl -fsSL https://server.shibumistack.dev/install | bash" aria-label="Copy install command" title="Copy install command"><svg class="copy-icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg><svg class="check-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m20 6-11 11-5-5"/></svg></button>
+      </div>
+      <p class="next">Next, connect a project with <a href="https://shibumistack.dev/ship">Shibumi Ship</a>. Server operators can register one directly with <code>shis add example.com</code>.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-line">
+      <span>Simple infrastructure for self-hosted apps.</span>
+      <nav aria-label="Footer"><a href="#how">About</a><a href="/docs">Docs</a><details class="stack-menu"><summary>Shibumi Stack</summary><div class="stack-popover"><a href="https://shibumistack.dev"><span>Stack</span><small>Build and ship Bun apps</small></a><a href="https://forms.shibumistack.dev"><span>Forms</span><small>Collect form submissions</small></a><a href="https://server.shibumistack.dev" aria-current="page"><span>Server</span><small>Deploy to your VPS</small></a></div></details><a href="https://github.com/bitbonsai/shibumi-server">GitHub</a><a href="mailto:info@shibumistack.dev">Contact</a></nav>
+    </div>
+    <p class="footer-meta">MIT License © 2026 Shibumi Server · Made with <svg class="footer-heart" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg><span class="sr-only">love</span> by <a href="https://bitbonsai.com">@bitbonsai</a></p>
+  </footer>
+  <script src="/app.js"></script>
+</body>
+</html>
