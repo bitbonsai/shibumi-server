@@ -1,22 +1,24 @@
 # shibumi-server
 
-Small, secure webhook deployments for a VPS running rootless Podman.
+Deploy apps to a Linux VPS with rootless Podman, Caddy, and systemd.
 
-> Experimental: release `0.10.6` is being dogfooded.
+> Experimental. Version `0.10.6` is in dogfood use.
 
-Installed commands use short name `shis`. Original `shibumi-server` remains a compatible alias. Interactive output uses Clack's native interface with persimmon branding and plain text when color is unavailable.
+The command is `shis`. `shibumi-server` still works. Terminal output uses Clack with persimmon branding, and plain text when color is unavailable.
 
 ## How it works
 
-The project-owned `bun ship` client checks committed code, builds the server's Linux architecture image on the developer machine, and uploads it through SSH before pushing Git. A signed GitHub push webhook then causes `shibumi-server` to fetch the exact commit, verify its repository, app, revision, source-tree, tag, and platform labels, replace the old container with Podman Compose without building, and check the new container's local health endpoint. Manual registrations can retain server-side builds with `deploymentMode: "build"`.
+`bun ship` checks your committed code, builds the server image on your computer, and uploads it over SSH before pushing Git. The signed GitHub webhook tells `shibumi-server` to fetch that exact commit. The server checks repository, app, commit, Git tree, tag, and platform before replacing the container and checking its health.
 
 ```text
 local build → SSH image upload → Git push → signed webhook → verify → rootless Podman → health check
 ```
 
-Projects can optionally run their own test command before startup. Every started app container receives `SHIBUMI_COMMIT`, containing the full deployed commit SHA, and `SHIBUMI_DEPLOYED_AT`, containing the deployment time as an ISO 8601 timestamp. These runtime variables require no app configuration and identify the actual retained image during rollback. After a healthy deployment, the server keeps two successful images total (the active image and one rollback), then prunes older dangling images. Caddy remains the public HTTPS server and retries an unavailable app upstream for 20 seconds while Compose replaces its container. Deployment logs record health readiness against that retry budget. After upgrading an existing installation, run `shis caddy-refresh <app-id>` once per managed app to add retry budget without replacing its other Caddy settings.
+Server-side builds remain available with `deploymentMode: "build"`.
 
-See [docs/architecture.md](docs/architecture.md) for the trust boundary and security model.
+Apps can run a test command before startup. Every app gets `SHIBUMI_COMMIT` and `SHIBUMI_DEPLOYED_AT` in its environment. After a healthy deploy, the server keeps the active image plus one rollback image, then prunes dangling image data. Caddy handles public HTTPS and retries the app upstream for 20 seconds during replacement.
+
+Read the [documentation](https://server.shibumistack.dev/docs). Markdown sources live in [`docs/`](docs/).
 
 ## Development
 
@@ -28,7 +30,7 @@ bun test
 bun run check
 ```
 
-Validate configuration and secrets:
+Validate config and secrets:
 
 ```bash
 bun src/cli.ts check --config ./config.json
@@ -40,13 +42,13 @@ Start the receiver:
 bun src/cli.ts serve --config ./config.json
 ```
 
-Copy [`examples/config.example.json`](examples/config.example.json) to a machine-local `config.json`. Real configuration and secrets are deliberately ignored by Git.
+Copy [`examples/config.example.json`](examples/config.example.json) to a machine-local `config.json`. Git ignores real config and secrets.
 
 ## Resource safety
 
-Each deployment checks available host memory and free space on the checkout filesystem before touching Git. Build mode defaults to 2 GiB of available memory; owned ship setup uses 512 MiB for prebuilt apps. Both require 4 GiB of free disk. Server-side builds are killed after 10 minutes by default. Configure these per app with `minimumFreeMemoryMb`, `minimumFreeDiskMb`, and `buildTimeoutMs`. Prebuilt apps skip server builds, so operators can lower their memory floor after measuring startup needs.
+Before touching Git, each deploy checks available memory and free space on the checkout filesystem. Server builds default to 2 GiB available memory; prebuilt apps default to 512 MiB. Both default to 4 GiB free disk. Server builds stop after 10 minutes. Set `minimumFreeMemoryMb`, `minimumFreeDiskMb`, and `buildTimeoutMs` per app.
 
-The example systemd unit also caps the receiver and its direct build processes at 1.5 GiB of memory, 256 MiB of swap, two CPUs, and 512 tasks. Tune these ceilings for the host, but always leave capacity for SSH, Caddy, and existing apps. App containers run in Podman-managed cgroups and need their own Compose resource limits; see [the architecture guide](docs/architecture.md#resource-guards).
+The systemd unit caps the receiver at 1.5 GiB memory, 256 MiB swap, two CPUs, and 512 tasks. Leave capacity for SSH, Caddy, and running apps. Set app limits in Compose; see [resource guards](docs/architecture.md#resource-guards).
 
 ## GitHub webhook
 
@@ -56,25 +58,25 @@ Configure one webhook per app:
 - Content type: `application/json`
 - Event: push
 - SSL verification: enabled
-- Secret: a unique random value generated with `openssl rand -hex 32`
+- Secret: unique random value from `openssl rand -hex 32`
 
-The receiver rejects malformed event, delivery, and signature headers before reading the body, then verifies `X-Hub-Signature-256`, repository, branch, and full commit SHA. Active and successful `X-GitHub-Delivery` UUIDs are remembered in a bounded 24-hour replay cache; a duplicate is acknowledged without deploying again, while failed deliveries can be retried. If an app is already deploying, the same commit attaches to active work. A different commit is saved in a persistent latest-wins queue and starts when active work ends. Later pushes replace the pending commit.
+The receiver rejects malformed headers before reading the body, then verifies the signature, repository, branch, and commit SHA. Verified delivery IDs stay in a bounded 24-hour cache. A duplicate gets acknowledged without another deploy. If an app is already deploying, a newer commit waits in a persistent latest-wins queue; later pushes replace it.
 
-HMAC verification prevents fake requests from authorizing code, but it is not volumetric DDoS protection. Keep the listener on loopback and use Caddy, the host firewall, or an upstream provider to rate-limit the public webhook path. For stricter installations, allowlist GitHub's current `hooks` CIDRs from the [GitHub Meta API](https://api.github.com/meta) and automate updates so the list cannot silently go stale.
+HMAC blocks fake requests, not heavy traffic. Keep the listener on loopback and rate-limit the public path in Caddy, the firewall, or an upstream provider. For stricter installs, allowlist GitHub's current `hooks` CIDRs from the [GitHub Meta API](https://api.github.com/meta) and update the list automatically.
 
 ## Installation
 
-The first release targets Linux with Bun, Git, rootless Podman, a usable Compose frontend (`podman compose` or `podman-compose`), Caddy, and a systemd user session.
+The server needs Linux with Bun, Git, rootless Podman, `podman compose` or `podman-compose`, Caddy, and a systemd user session.
 
-Recommended onboarding starts from your local project root:
+Start from the local project root:
 
 ```bash
 curl -fsSL https://shibumistack.dev/install/ship.sh | sh
 ```
 
-Owned ship setup connects through confirmed SSH, installs or upgrades `shibumi-server` when needed, enables prebuilt deployments, registers the app, and configures GitHub. Local prebuilt shipping uses Colima with Docker CLI, Docker Compose, and Buildx. Ship validates these tools before tests or confirmation and offers to remove stale unavailable Docker credential-helper references after saving a mode-`0600` backup. If DNS or webhook delivery is pending, setup files remain in the project and setup resumes with `bun ship:setup`.
+Ship connects over confirmed SSH, installs or upgrades `shibumi-server`, enables prebuilt deploys, registers the app, and configures GitHub. Local builds need Colima, Docker CLI, Docker Compose, and Buildx. If Docker config names a missing credential helper, Ship offers to remove that reference after saving a mode-`0600` backup.
 
-Recommended local macOS setup:
+Recommended macOS setup:
 
 ```bash
 brew install colima docker docker-compose docker-buildx
@@ -84,23 +86,25 @@ docker compose version
 docker buildx version
 ```
 
-Server operators can prepare the host directly by logging in as the deployment user and running:
+To prepare the server directly, log in as the deployment user and run:
 
 ```bash
-curl -fsSL https://shibumistack.dev/install/server | bash
+curl -fsSL https://server.shibumistack.dev/install | bash
 ```
 
-The server bootstrap installs Bun when needed, then runs interactive setup. Setup checks Git, Caddy, rootless Podman, a working Compose frontend, and the systemd user session before changing server configuration. It copies the resolved release locally, installs its lockfile-pinned production dependencies without lifecycle scripts, creates mode-restricted config and secret files, writes a resource-limited systemd user service, and installs `shibumi-server` in `~/.local/bin`. The service stays pinned to that local release until you run an explicit upgrade. Make sure `~/.local/bin` is on `PATH`.
+The bootstrap installs Bun when needed, then runs setup. Setup checks the host before changing config. It installs the fixed release locally, creates restricted config and secret files, writes the systemd user service, and installs `shis` in `~/.local/bin`. The service runs that local release until you update it. Put `~/.local/bin` on `PATH`.
 
-For manual server operation or automation, add an app with the installed command:
+Add an app on the server with:
 
 ```bash
 shis add example.com
 ```
 
-Interactive app setup retries transient DNS failures, falls back to the server's system resolver, distinguishes unavailable lookups from confirmed missing records, detects an existing Caddy site, accepts `github:owner/repo`, a GitHub repository URL, or a `/tree/<branch>` URL, suggests a user-owned checkout under `~/shibumi`, then assigns the first available loopback port above `9000`. Successful manual registration prints the exact local ship installer command. Recommended Caddy settings enable Zstd with gzip fallback, indexing, safe baseline headers, and bounded JSON logs; Custom exposes each setting. Existing sites preserve their current block by default, with explicit rewrite available. Add `--dry-run` to follow the same detection, prompts, port selection, and validation without writing config or secrets, invoking sudo, or changing Caddy or systemd. A real add clones a missing checkout or safely fast-forwards a clean existing checkout to its configured origin branch, generates a unique 32-byte webhook secret, enables the user service, and asks sudo only when its constrained helper validates and reloads Caddy. GitHub remains unchanged until the client ship script configures its webhook. Rerunning the same domain command validates stored settings, preserves the checkout and webhook secret, skips Caddy mutation, and restarts the user service.
+Setup checks DNS and existing Caddy config, accepts `github:owner/repo` or a GitHub URL, suggests a checkout under `~/shibumi`, and picks the first free loopback port above `9000`. It writes the app config, creates a 32-byte webhook secret, enables the service, and asks sudo only when the constrained Caddy helper has validated the change. GitHub stays unchanged until the project client configures its webhook.
 
-For scripts and unattended setup, pin the bootstrap release and provide every app value explicitly:
+Use `--dry-run` to follow the same path without writing config or secrets, running sudo, or changing Caddy or systemd. Repeating the same registration keeps stored settings and restarts the service. Conflicting settings fail.
+
+For unattended setup, pin the release and provide every app value:
 
 ```bash
 bunx shibumi-server@0.10.6 init
@@ -111,35 +115,35 @@ shis add example.com \
   --deployment-mode prebuilt
 ```
 
-`init` stores the release under `~/.local/share/shibumi-server/releases/0.10.6`, updates the local `current` symlink and launcher, and prepares the config, secrets, and systemd service. Re-running it preserves machine config and secrets. `add` validates the complete app config. Prebuilt mode accepts only an exact commit-tagged Linux image loaded through `shis image-load`; build mode remains available for manual server builds. To run app-owned tests before startup, append an optional argument array such as `-- bun test`; it is never interpreted as a shell string.
+`init` stores the release under `~/.local/share/shibumi-server/releases/0.10.6`, updates the `current` link and launcher, and prepares config, secrets, and systemd. Re-running it keeps machine config and secrets. Prebuilt mode accepts only the exact commit-tagged Linux image loaded through `shis image-load`. Add app tests after `--`, such as `-- bun test`.
 
-List or remove registered apps with branded server-side flows. `list` probes each configured internal health URL concurrently and marks healthy apps green and unhealthy or unreachable apps red:
+List or remove apps:
 
 ```bash
 shis list
 shis remove example.com
 ```
 
-Removal confirms the selected app, removes its Shibumi config, webhook secret, deployment status, managed Caddy route, and app containers, then validates and reloads Caddy. It preserves the checkout, volumes, images, and GitHub webhook. Remove the preserved webhook from GitHub when the domain will no longer deploy from that repository. `--yes` skips Shibumi's confirmation for automation but never bypasses sudo. Removing the last app stops the service.
+Removal deletes Shibumi config, secret, status, managed Caddy route, and app containers. It keeps the checkout, volumes, images, and GitHub webhook. Remove that webhook in GitHub when the domain no longer deploys from its repository. `--yes` skips Shibumi confirmation, not sudo. Removing the last app stops the service.
 
-Uninstall the service, launcher, and installed releases while preserving machine config and webhook secrets:
+Uninstall the service, launcher, and installed releases:
 
 ```bash
 shis uninstall
 ```
 
-Uninstall asks for confirmation and preserves config and webhook secrets by default. `shis uninstall --purge` also deletes them with a stronger confirmation. Automation can use `--yes`; purging requires explicit `--purge --yes`. Neither mode removes app checkouts, containers, Caddy routes, or GitHub settings.
+Config and webhook secrets stay. `shis uninstall --purge` deletes them after a stronger confirmation. Automation must pass `--purge --yes`. Neither mode removes checkouts, containers, Caddy routes, or GitHub settings.
 
-Export commit-safe client configuration and inspect deployment status over SSH:
+Export client config and inspect status over SSH:
 
 ```bash
 shis client-config example-com --server-hostname server.example.com
 shis status example-com --commit <full-sha> --json
 ```
 
-`client-config` contains app identity and routing metadata but no webhook secret, credentials, checkout path, or local SSH alias. `webhook-secret` exists only for an explicit SSH-to-`gh` handoff and prints JSON to stdout so clients can keep it in memory. Deployment status files are mode-restricted and updated atomically as webhook work moves through preflight, checkout, build, startup, and health stages. Verified webhook deliveries also append safe metadata to a mode-restricted, bounded history. Payloads, signatures, secrets, and request headers are never stored.
+Client config has app identity and routing metadata, with no secret, credentials, checkout path, or SSH alias. `webhook-secret` prints JSON only for explicit SSH-to-`gh` handoff.
 
-Inspect recent deployments, redeploy an already-pushed exact commit, or restore the previous retained image:
+Inspect recent deploys, redeploy an existing commit, or restore the previous image:
 
 ```bash
 shis history example-com
@@ -150,15 +154,13 @@ shis deployment-mode example-com prebuilt
 shis rollback example-com
 ```
 
-`deployment-mode` switches an app between local prebuilt images and server builds, adjusts the corresponding memory floor, and restarts the service. `enable-prebuilt` remains a compatibility alias. `logs` prints the latest deployment log for an app. Each new deployment atomically replaces the previous mode-`0600` log, bounded to 256 KiB.
+`deployment-mode` switches between local prebuilt images and server builds, adjusts its memory floor, and restarts the service. `enable-prebuilt` remains an alias. `logs` prints the latest mode-`0600` deployment log, bounded to 256 KiB.
 
-Rollback restores the one previous successful image retained for the app, recreates the service without building, and verifies health. `releaseRetention` defaults to `2`: current plus one rollback image. Rollback image expires after 12 hours. Successful cutover removes older release, staging, and superseded upload tags. A successful rollback rotates retention so another rollback can return to the image that was active before it. If rollback startup or health fails, Shibumi restores the current image. Before replacing a running app, every normal deployment also records its current image and restores it when startup or health checks fail.
+Rollback restores the previous image kept for up to 12 hours, starts it without building, and checks health. A successful rollback keeps the replaced image for the next rollback. If rollback fails health, Shibumi restores the current image. Normal deploys also record the running image and restore it after failed startup or health.
 
-Every user-run command checks npm for a newer stable release with a short timeout. When one exists, it suggests `shis update`; registry failures never block local work. Update installs the exact stable version reported by npm through Bun, reuses the idempotent `init` path, preserves config and secrets, updates the local release symlink and launcher, then reloads the systemd user service:
+`shis` checks npm for newer stable releases and suggests `shis update` when one exists. Registry failures never block local work. `update` installs the exact stable version, keeps config and secrets, updates the local release link, and reloads the service.
 
-```bash
-shis update
-``` Hosts with the standalone Compose frontend add `--compose-command podman-compose`. Optional flags configure the branch ref, Compose file, service, and health path. Run `shis --help` for the full syntax. Add the webhook route before the site's normal handler, then copy the secret from the mode-`0600` file into GitHub's webhook settings.
+Hosts with the standalone Compose frontend can pass `--compose-command podman-compose`. Optional flags set branch, Compose file, service, and health path. Run `shis --help` for full syntax.
 
 ## License
 

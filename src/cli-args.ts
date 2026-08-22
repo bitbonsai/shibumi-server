@@ -48,7 +48,7 @@ export function formatHelp(color = false): string {
   const detail = (value: string) => paint(value, "muted");
 
   return `${paint("渋み", "accent")}  ${paint("shis", "bold")} ${detail("(shibumi-server)")}
-${detail("Small, secure webhook deploys for rootless Podman.")}
+${detail("Deploy apps to a Linux VPS with rootless Podman.")}
 
 ${heading("USAGE")}
   ${command("shis")} [command]
@@ -103,7 +103,7 @@ ${heading("ADD OPTIONS")}
   ${command("--health-path </healthz>")}        Loopback health path
   ${command("--deployment-mode <mode>")}        build or prebuilt
 
-${detail("Docs: https://shibumistack.dev/server")}`;
+${detail("Docs: https://server.shibumistack.dev")}`;
 }
 
 export const usageText = formatHelp();
