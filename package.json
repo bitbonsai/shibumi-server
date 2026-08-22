@@ -22,7 +22,8 @@
     "ship:setup": "bun scripts/ship.ts --setup",
     "ship:update": "bun scripts/ship.ts --update",
     "ship:logs": "bun scripts/ship.ts --logs",
-    "dev:app": "bun scripts/dev-site.ts"
+    "dev:app": "bun scripts/dev-site.ts",
+    "ship:status": "bun scripts/ship.ts --status"
   },
   "files": [
     "bin",

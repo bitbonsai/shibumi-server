@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "provider": "shibumi-server",
+  "server": {
+    "hostname": "alpha"
+  },
+  "domain": "server.shibumistack.dev",
+  "appId": "server-shibumistack-dev",
+  "repository": "github:bitbonsai/shibumi-server",
+  "branch": "main",
+  "webhookUrl": "https://server.shibumistack.dev/hooks/github/server-shibumistack-dev",
+  "service": "app",
+  "port": 9001,
+  "healthPath": "/",
+  "deploymentMode": "prebuilt",
+  "platform": "linux/arm64",
+  "cutoverRequired": false,
+  "trigger": "ship"
+}
