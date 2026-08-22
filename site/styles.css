@@ -7,6 +7,8 @@ nav { margin-left:auto; }
 .nav-icon svg { width:1.05rem; height:1.05rem; fill:currentColor; }
 .theme-toggle { margin:0; }
 .theme-toggle svg { grid-area:1 / 1; stroke-linecap:round; stroke-linejoin:round; }
+.theme-toggle .icon-sun { display:block; }
+.theme-toggle .icon-moon { display:none; }
 main,footer { width:min(var(--max),calc(100% - 2rem)); margin:auto; }
 .hero { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(24rem,.85fr); gap:clamp(3rem,8vw,7rem); align-items:center; min-height:min(48.75rem,calc(100svh - 4.8rem)); padding:clamp(5rem,10vw,8rem) 0; }
 h1,h2,h3,p { text-wrap:pretty; }

@@ -21,6 +21,10 @@ SHIBUMI_INTEGRATION=1 bun test test/integration.test.ts
 
 Use `SHIBUMI_COMPOSE_COMMAND=podman-compose` on hosts with the standalone Compose frontend.
 
+## Site styles
+
+The marketing site's shared design layer is vendored: `site/shibumi.css` is a copy of the canonical file in the shibumistack.dev repo (`public/shibumi.css`). Do not edit the vendored copy; edit the canonical file and run `scripts/sync-shibumi-css.sh` to re-pull. `site/styles.css` holds only site-specific rules layered after it. Typescale is 12/14/16/18/21/25 in rem, never below 12px, never off-scale values; body is sans, headings serif, mono stack leads with `ui-monospace`.
+
 ## Releases
 
 Create and push matching `v${version}` Git tag at release commit before `npm publish`. Postpublish website sync verifies tagged `install.sh`; publishing first uploads package but leaves sync failed.

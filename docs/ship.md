@@ -12,7 +12,11 @@ curl -fsSL https://shibumistack.dev/install/ship.sh | sh
 
 The installer refuses to run outside a Git root. It never overwrites local edits to `scripts/ship.ts`. Setup can install or upgrade `shibumi-server`, register the app, and configure GitHub through SSH. You do not need to run `shis add` first.
 
+The installer reserves `bun dev` for Ship's local deployment preview. If the project already has a `dev` script, it keeps that command as `bun dev:app`.
+
 If the repository has no tracked Compose file, setup can generate `Dockerfile`, `compose.yaml`, and `.dockerignore` from standard Bun scripts. Review, commit, and push those files. Then run `bun ship:setup` again. Existing files stay untouched.
+
+If setup stops after writing the client files, fix the reported problem and resume with `bun ship:setup`. You do not need to rerun the curl installer.
 
 ## Run first setup
 
@@ -20,7 +24,11 @@ If the repository has no tracked Compose file, setup can generate `Dockerfile`, 
 bun ship:setup
 ```
 
-Use the `user@server` target or SSH alias you already use. Password login works. Enter the password once per run, and Ship reuses the temporary SSH connection.
+Use the `user@server` target or SSH alias you already use. Password login works. Enter the password once per run, and Ship reuses the temporary SSH connection. To select the target without a text prompt:
+
+```sh
+bun ship:setup --server user@server
+```
 
 SSH targets stay in `~/.config/shibumi/config.json`, or `$XDG_CONFIG_HOME/shibumi/config.json`, with mode `0600`. They are not committed. Projects with one saved server reuse it; projects with several saved servers show a picker. Setup runs `~/.local/bin/shibumi-server` remotely and writes only sanitized project config.
 
@@ -79,6 +87,8 @@ Change the SSH target with `git config --local shibumi.server user@server`.
 Before each deploy, Ship checks the mutable latest pointer against its reviewed immutable source. When a newer client exists, it offers to run that version now. After a successful deployment, it updates tracked `scripts/ship.ts` and leaves the change unstaged for review. `bun ship -y` accepts that update automatically.
 
 Network failures keep the current client. Unknown local edits are never overwritten. Server setup, webhook, SSH target, and `shibumi-server.json` stay unchanged.
+
+If the installer reports that `scripts/ship.ts` contains owned changes, review and merge the immutable client URL printed in the error. The refusal is intentional: Ship will not replace a modified deployment client. Rerun setup after the reviewed client is committed.
 
 Manual update:
 
