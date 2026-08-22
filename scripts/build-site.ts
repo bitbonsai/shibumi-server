@@ -131,6 +131,9 @@ export async function buildSite(log = true): Promise<void> {
     ".txt:text/plain",
     ".sh:text/plain",
     ".xml:application/xml",
+    ".svg:image/svg+xml",
+    ".png:image/png",
+    ".webp:image/webp",
     "",
   ].join("\n"));
   if (log) console.log(`Built server.shibumistack.dev v${version}`);

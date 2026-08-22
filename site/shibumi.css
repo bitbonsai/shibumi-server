@@ -1,0 +1,418 @@
+/* shibumi.css — canonical shared layer for shibumistack.dev, shibumi-server, shibumi-forms.
+   Source of truth: shibumistack.dev repo public/shibumi.css. Do not edit vendored copies. */
+
+/* shared.css: common styles for all pages */
+
+:root {
+    color-scheme: light dark;
+    /* palette copied from shibumi-server site/styles.css */
+    --paper: light-dark(#f5f0e4, #1b130f);
+    --ink: light-dark(#272016, #eee5d7);
+    --muted: light-dark(#746b5d, #aaa092);
+    --faint: light-dark(rgba(39, 32, 22, 0.055), rgba(238, 229, 215, 0.07));
+    --line: light-dark(rgba(39, 32, 22, 0.14), rgba(238, 229, 215, 0.16));
+    --orange: light-dark(#e95f19, #ff8648);
+    --orange-soft: light-dark(#f8dfcd, #3c2117);
+    --green: light-dark(#26723e, #75d58a);
+    --danger: light-dark(#a13b2c, #e36c59);
+    --code: light-dark(#201c16, #120e0b);
+    --code-ink: #e9e2d5;
+    /* aliases so existing components pick up the server palette */
+    --bg: var(--paper);
+    --text: var(--ink);
+    --quiet: var(--faint);
+    --accent: var(--orange);
+    --accent-soft: var(--orange-soft);
+    --accent-hover: light-dark(#d15515, #ff9a66);
+    --success: var(--green);
+    --success-text: var(--green);
+    --success-ink: #17331f;
+    --terminal-success: light-dark(#3d8f50, #78e88f);
+    --terminal-active: light-dark(#16839a, #62dff0);
+    --terminal-info: light-dark(#397fc0, #74b6ff);
+    --max: 72.5rem;
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-serif: ui-serif, Georgia, "Iowan Old Style", "Apple Garamond", Cambria, serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --text-xs: 0.75rem;   /* 12px tiny */
+    --text-sm: 0.875rem;  /* 14px small */
+    --text-md: 1rem;      /* 16px normal / UI */
+    --text-base: 1.125rem; /* 18px body */
+    --text-lg: 1.3125rem; /* 21px */
+    --text-xl: 1.563rem;  /* 25px */
+    --text-2xl: 1.953rem;
+}
+
+[data-theme="dark"] { color-scheme: dark; }
+[data-theme="light"] { color-scheme: light; }
+
+*, *::before, *::after { box-sizing: border-box; }
+html { min-height: 100%; }
+
+body {
+    margin: 0;
+    min-height: 100svh;
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    font-weight: 400;
+    line-height: 1.65;
+    color: var(--text);
+    background: var(--bg);
+}
+
+h1, h2, h3 {
+    font-family: var(--font-serif);
+}
+
+/* theme-independent noise texture, copied from shibumi-server */
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.33;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.88' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.08'/%3E%3C/svg%3E");
+}
+
+a { color: inherit; }
+
+main a:not(.btn):not(.button) {
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--accent) 30%, transparent);
+    text-underline-offset: 0.18em;
+    transition: text-decoration-color 160ms ease;
+}
+
+main a:not(.btn):not(.button):hover,
+main a:not(.btn):not(.button):focus-visible {
+    text-decoration-color: var(--accent);
+}
+
+.shell {
+    width: min(var(--max), calc(100% - 2rem));
+    margin: 0 auto;
+    padding: 5.5rem 0 0;
+    position: relative;
+}
+
+/* ---- header / nav ---- */
+
+header,
+.site-header {
+    position: fixed;
+    top: 0;
+    left: 50%;
+    z-index: 20;
+    width: min(var(--max), calc(100% - 2rem));
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 0;
+    transform: translateX(-50%);
+}
+
+header::before,
+.site-header::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 50%;
+    z-index: -1;
+    width: 100vw;
+    height: 100%;
+    transform: translateX(-50%);
+    background: light-dark(rgb(245 240 228 / 78%), rgb(27 19 15 / 72%));
+    backdrop-filter: blur(1.125rem);
+    -webkit-backdrop-filter: blur(1.125rem);
+}
+
+.mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--muted);
+    text-decoration: none;
+    font-family: var(--font-sans);
+    font-size: 1.125rem;
+    font-weight: 400;
+    letter-spacing: 0.03rem;
+}
+
+.mark-tld {
+    color: light-dark(rgba(92, 88, 82, 0.5), rgba(189, 183, 173, 0.62));
+    font-weight: 300;
+}
+
+.mark img,
+img.mark-logo {
+    width: 2.125rem;
+    height: 2.125rem;
+    border-radius: 0.5rem;
+}
+
+[data-theme="dark"] .mark .logo-light,
+[data-theme="light"] .mark .logo-dark { display: none; }
+
+main, .page { min-width: 0; }
+
+.eyebrow {
+    margin: 0 0 1rem;
+    color: var(--accent);
+    font: 300 var(--text-md)/1.2 var(--font-mono);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+nav {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    font-family: var(--font-sans);
+    font-size: var(--text-md);
+    color: var(--muted);
+}
+
+nav a {
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+}
+
+nav a:hover,
+nav a[aria-current="page"] {
+    border-bottom-color: var(--accent);
+    color: var(--text);
+}
+
+.nav-links {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.nav-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.nav-icons {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.github-link {
+    display: inline-flex;
+    align-items: center;
+    border-bottom: 0;
+    color: var(--muted);
+}
+
+.github-link svg {
+    width: 1.05rem;
+    height: 1.05rem;
+    fill: currentColor;
+}
+
+.github-link:hover {
+    color: var(--text);
+    border-bottom: 0;
+}
+
+.stack-menu { position: relative; }
+
+.stack-menu summary {
+    cursor: pointer;
+    list-style: none;
+    transition: color 160ms ease;
+}
+
+.stack-menu summary::-webkit-details-marker { display: none; }
+.stack-menu summary:hover,
+.stack-menu summary:focus-visible,
+.stack-menu[open] summary,
+.stack-menu:has(a[aria-current="page"]) summary { color: var(--text); }
+
+.stack-menu summary:focus-visible {
+    border-radius: 0.2rem;
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+}
+
+.stack-popover {
+    position: absolute;
+    top: calc(100% + 0.75rem);
+    right: 0;
+    z-index: 30;
+    width: 14rem;
+    padding: 0.45rem;
+    border-radius: 0.5rem;
+    background: light-dark(rgb(255 250 240 / 78%), rgb(48 35 29 / 72%));
+    -webkit-backdrop-filter: blur(0.5rem);
+    backdrop-filter: blur(0.5rem);
+    box-shadow: 0 0.8rem 2.5rem light-dark(rgb(20 14 9 / 18%), rgb(0 0 0 / 58%));
+}
+
+.stack-popover a {
+    display: block;
+    padding: 0.65rem 0.75rem;
+    border: 0;
+    border-radius: 0.3rem;
+    color: var(--muted);
+}
+
+.stack-popover a:hover,
+.stack-popover a:focus-visible {
+    border: 0;
+    outline: none;
+    background: var(--quiet);
+    color: var(--text);
+}
+
+.stack-popover a[aria-current="page"] { color: var(--accent); }
+
+/* first menu in nav (About) opens aligned to its left edge */
+.nav-links > .stack-menu:first-child .stack-popover { left: 0; right: auto; }
+.stack-popover span,
+.stack-popover small { display: block; }
+.stack-popover span { color: inherit; font-weight: 700; }
+.stack-popover small { margin-top: 0.1rem; color: var(--muted); font-size: var(--text-xs); }
+
+/* ---- theme toggle ---- */
+
+.theme-toggle {
+    appearance: none;
+    display: inline-grid;
+    place-items: center;
+    width: 1.7rem;
+    height: 1.7rem;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 0;
+}
+
+.theme-toggle:hover { color: var(--text); }
+
+.theme-toggle svg {
+    width: 1.1rem;
+    height: 1.1rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+}
+
+[data-theme="dark"] .theme-toggle .icon-sun,
+[data-theme="light"] .theme-toggle .icon-moon { display: none; }
+[data-theme="dark"] .theme-toggle .icon-moon,
+[data-theme="light"] .theme-toggle .icon-sun { display: block; }
+/* alias var names used by server/forms stylesheets */
+:root {
+    --sans: var(--font-sans);
+    --serif: var(--font-serif);
+    --mono: var(--font-mono);
+    --fs-xs: var(--text-xs);
+    --fs-sm: var(--text-sm);
+    --fs-md: var(--text-md);
+    --fs-base: var(--text-base);
+    --fs-lg: var(--text-lg);
+}
+
+/* ---- footer ---- */
+
+.site-footer {
+    margin-top: clamp(4rem, 8vw, 6rem);
+    padding: 1.5rem 0;
+    border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    color: var(--muted);
+}
+
+.footer-line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.footer-line nav {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    font: inherit;
+}
+
+.site-footer .stack-popover {
+    top: auto;
+    right: auto;
+    bottom: calc(100% + 0.75rem);
+    left: 0;
+}
+
+.footer-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin: 0.75rem 0 0;
+    font-size: var(--text-xs);
+    opacity: 0.75;
+}
+
+.site-footer a {
+    text-decoration: none;
+    color: var(--muted);
+}
+
+.site-footer a:hover {
+    color: var(--accent);
+}
+
+.footer-heart {
+    width: 0.875rem;
+    height: 0.875rem;
+    fill: currentColor;
+    color: var(--danger);
+    opacity: 0.5;
+    transition: opacity 150ms;
+}
+
+.footer-meta:hover .footer-heart {
+    opacity: 1;
+    animation: heart-pulse 1s ease-in-out infinite;
+}
+
+@keyframes heart-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.3); }
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+
+/* green pulse on the box around a just-used copy button */
+@keyframes copy-glow {
+    0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    35% {
+        box-shadow:
+            0 0 0 3px color-mix(in srgb, var(--success) 30%, transparent),
+            0 0 1.5rem color-mix(in srgb, var(--success) 40%, transparent);
+    }
+}
+
+:has(> .copied), :has(> .is-copied) {
+    animation: copy-glow 1.2s ease-in-out;
+}

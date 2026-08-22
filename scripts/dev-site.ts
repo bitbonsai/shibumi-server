@@ -31,9 +31,14 @@ const watchers = [
 
 const files: Record<string, [string, string]> = {
   "/styles.css": ["site/styles.css", "text/css; charset=utf-8"],
+  "/shibumi.css": ["site/shibumi.css", "text/css; charset=utf-8"],
+  "/favicon.png": ["site/favicon.png", "image/png"],
+  "/shibumistack-light.webp": ["site/shibumistack-light.webp", "image/webp"],
+  "/shibumistack-dark.webp": ["site/shibumistack-dark.webp", "image/webp"],
   "/docs.css": ["site/docs.css", "text/css; charset=utf-8"],
   "/app.js": ["site/app.js", "application/javascript; charset=utf-8"],
   "/docs.js": ["site/docs.js", "application/javascript; charset=utf-8"],
+  "/favicon.svg": ["site/favicon.svg", "image/svg+xml"],
   "/index.md": ["README.md", "text/plain; charset=utf-8"],
 };
 const reload = `<script>new EventSource("/__hmr").onmessage=({data})=>{if(data.endsWith(".css")){for(const link of document.querySelectorAll('link[rel="stylesheet"]')){const next=link.cloneNode();next.href=new URL(link.href);next.href+=(next.href.includes("?")?"&":"?")+Date.now();next.onload=()=>link.remove();link.after(next)}}else location.reload()}</script>`;
@@ -73,7 +78,12 @@ const server = Bun.serve({
     const body = path.endsWith(".html") ? (await staticFile.text()).replace("</body>", `${reload}</body>`) : staticFile;
     const contentType = path.endsWith(".html") ? "text/html; charset=utf-8"
       : path.endsWith(".md") || path.endsWith(".txt") ? "text/plain; charset=utf-8"
-      : path.endsWith(".xml") ? "application/xml; charset=utf-8" : "application/octet-stream";
+      : path.endsWith(".xml") ? "application/xml; charset=utf-8"
+      : path.endsWith(".css") ? "text/css; charset=utf-8"
+      : path.endsWith(".js") ? "application/javascript; charset=utf-8"
+      : path.endsWith(".png") ? "image/png"
+      : path.endsWith(".webp") ? "image/webp"
+      : path.endsWith(".svg") ? "image/svg+xml" : "application/octet-stream";
     return new Response(body, { headers: { "Content-Type": contentType } });
   },
 });
