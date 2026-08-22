@@ -64,6 +64,8 @@ Create and push matching `v${version}` Git tag at release commit before `npm pub
 - Dev preview does not claim port 9100 from an existing listener. Kill stale PID before starting `bun dev`.
 - Body-copy selectors must exclude label classes directly; `.scope-copy > p:not(.eyebrow,.fine-print)` overrode `.scope-label` font size.
 - Docs Markdown output starts at `docs/`, so images and routes must remain portable between GitHub and `server.shibumistack.dev`.
+- `scripts/ship.ts` must match reviewed upstream client. Local edits trigger installer `owned changes`; publish upstream immutable version, then sync.
+- `oven/bun:1.4.0-slim` compressed layers are ~25 MiB (62%) larger than Alpine on ARM64 and AMD64. `slim` name does not mean smaller here.
 
 ## Public versus local
 
