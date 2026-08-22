@@ -70,4 +70,4 @@ Same-commit result:
 
 These are pilot measurements, not a broad benchmark. Local and server build caches were warm. Pilot A baseline was a historical estimate rather than a same-commit run. Pilot B is a controlled same-commit comparison, but contains one measured run per mode. Network speed affects full-image SSH upload time. Memory sampling may miss spikes shorter than 200ms.
 
-Main operational result matters more than raw speed: CPU and memory-heavy image construction moved off 4 GB VPS while server kept verification, cutover, health, and rollback control.
+The useful result is not raw speed. Image construction moved off the 4 GB VPS, while the server kept verification, replacement, health, and rollback.

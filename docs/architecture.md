@@ -1,52 +1,52 @@
 # Architecture
 
-`shibumi-server` is a small host service for webhook-driven deployments to a VPS running rootless Podman.
+`shibumi-server` receives a signed webhook and replaces an app with the image that `bun ship` uploaded from the same commit.
 
 ## Request flow
 
 ```text
-local client verifies clean committed work
-  → Docker builds the server platform image from a Git archive
-  → client uploads the exact commit tag through SSH
-  → Git push causes the git host to send an HTTPS webhook
-  → Caddy proxies the webhook path to localhost
-  → shibumi-server verifies the signature, repository, and branch
-  → shibumi-server fetches the exact commit
-  → Podman verifies image identity labels, source tree, tag, and platform
-  → optional app-owned tests run in a temporary container
-  → Podman replaces the application container
-  → shibumi-server checks the local health endpoint
-  → Podman retains two successful images total and prunes older dangling images
+Ship checks committed work
+  → Docker builds the server-platform image from a Git archive
+  → Ship uploads the exact commit tag over SSH
+  → Git push sends an HTTPS webhook
+  → Caddy proxies it to loopback
+  → shibumi-server verifies signature, repository, and branch
+  → the server fetches the exact commit
+  → Podman verifies image labels, Git tree, tag, and platform
+  → optional app tests run in a temporary container
+  → Podman replaces the app container
+  → shibumi-server checks the loopback health endpoint
+  → Podman keeps two successful images and prunes dangling data
 ```
 
-The receiver listens on a loopback address. Caddy is the only public HTTP server.
+Only Caddy listens publicly. The receiver binds to loopback.
 
 ## Trust boundary
 
-A valid webhook authorizes repository code or its preloaded image to run as the deployment Unix user. Use a dedicated unprivileged account and rootless Podman. Do not give that account access to unrelated applications.
+A valid webhook lets repository code, or its uploaded image, run as the deployment Unix user. Give that user only the apps it should deploy. Rootless Podman keeps those containers separate from root.
 
-The receiver never executes command text from the webhook. Repository, branch, checkout, Compose service, optional test command, and port all come from local configuration. Webhook values are compared against that configuration and commands are executed as argument arrays without a shell.
+The receiver never runs text from a webhook. Repository, branch, checkout, Compose service, tests, and port come from local config. Webhook values are matched against that config, and commands use argument arrays without a shell.
 
 ## Request validation
 
 GitHub requests must:
 
-- fit within the configured body limit;
+- fit within the body limit;
 - use JSON;
-- include a well-formed `X-GitHub-Delivery` UUID and supported event name;
-- include a valid `X-Hub-Signature-256` HMAC over the raw body;
-- identify the configured repository and exact `refs/heads/*` branch; and
+- include a well-formed `X-GitHub-Delivery` UUID and supported event;
+- include a valid `X-Hub-Signature-256` over the raw body;
+- match the configured repository and `refs/heads/*` branch; and
 - contain a full lowercase 40-character commit SHA.
 
-Malformed authentication headers are rejected before the body is read. A signed GitHub `ping` receives `200`. A valid push receives `202` while deployment continues asynchronously.
+Malformed authentication headers fail before the body is read. A signed GitHub `ping` gets `200`. A valid push gets `202`, and deployment continues asynchronously.
 
-Accepted delivery UUIDs are held in an in-memory, bounded 24-hour replay cache. Repeating a successful or active delivery receives `200` and does not build again. The cache deliberately records only fully verified pushes after the app lock is acquired, so an attacker cannot fill it with unsigned IDs. Failed deployments are removed so an operator can redeliver them; a delivery rejected with `409` is never recorded. Durable replay state across service restarts is later work.
+Verified delivery UUIDs stay in a bounded 24-hour memory cache. Repeating a successful or active delivery gets `200` without another deploy. Failed deliveries leave the cache so an operator can redeliver them. The cache clears on service restart; durable replay state is not built yet.
 
-Deployments are locked per application. A push received during active work enters a persistent latest-wins queue. A later push replaces the pending commit. The queued commit starts when active work ends, including after a failed deployment.
+One deploy runs per app. A newer verified push waits in a persistent latest-wins slot. Another newer push replaces it. The queued commit starts when active work finishes, including after failure.
 
 ## Deterministic checkout
 
-The deployment checkout is dedicated to the service. It must be clean before deployment.
+The deployment checkout belongs to Shibumi. It must be clean before deployment.
 
 ```text
 git status --porcelain
@@ -55,23 +55,25 @@ git rev-parse FETCH_HEAD
 git reset --hard <verified-commit>
 ```
 
-The fetched commit must exactly match the signed webhook payload. Runtime data and secrets must live outside the checkout.
+The fetched commit must match the signed webhook payload. Runtime data and secrets live outside the checkout.
 
 ## Prebuilt images
 
-The owned ship client refuses dirty work, runs project checks, and creates its Docker build context with `git archive` from exact `HEAD`. Ignored files, untracked files, local credentials, and machine-built `node_modules` do not enter the image context. Git submodules currently fail closed.
+Ship refuses dirty work, runs project checks, and builds from `git archive` at exact `HEAD`. Ignored files, untracked files, credentials, and local `node_modules` stay out of the build context. Git submodules fail closed.
 
-Docker Compose builds the image for the platform exported by the server, such as `linux/arm64`. A generic Compose override adds the repository, app ID, full revision, and Git source-tree labels without changing the app Dockerfile. The client saves the image under `localhost/shibumi-server/upload/<app-id>:<full-commit>` and streams the archive through the existing SSH connection to `shis image-load`. The server accepts stdin only for a registered prebuilt app, validates the declared archive size against free disk plus the configured floor, removes any older copy of that exact tag, loads with rootless Podman, then verifies labels, exact tag, and server platform. After fetching the signed webhook commit, it independently resolves the Git tree and requires the image tree label to match. Upload must finish before Git push, so the signed webhook cannot race a missing image.
+Docker Compose builds for the server's platform, such as `linux/arm64`. A Compose override adds repository, app ID, commit, and Git-tree labels without changing the app Dockerfile. Ship saves the image under `localhost/shibumi-server/upload/<app-id>:<full-commit>` and streams the archive through SSH to `shis image-load`.
 
-After the webhook verifies and fetches the same commit, Shibumi validates Compose with a generated image override, runs optional tests against the exact uploaded image, tags it as the app's stable runtime image, and starts with `--no-build`. A failed test never starts it. A failed startup or health check restores the prior runtime image. Successful retention removes the temporary upload tag. Build mode remains available for manual registrations.
+The server accepts stdin only for a registered prebuilt app. It checks archive size against free disk and the configured floor, removes any older copy of that tag, loads it with rootless Podman, then verifies labels, tag, and platform. After fetching the signed commit, it resolves the Git tree and requires it to match the image label. Upload must finish before Git push.
+
+After webhook verification and fetch, Shibumi validates Compose with the image override, runs optional tests, tags the upload as the app runtime image, and starts with `--no-build`. Failed tests never start the image. Failed startup or health restores the previous runtime image. Successful retention removes the temporary upload tag. Server-side builds remain available for manual registrations.
 
 ## Resource guards
 
-Before changing the checkout or starting deployment work, the receiver checks Linux `MemAvailable` and free space on the checkout filesystem. Build mode defaults to a 2 GiB memory floor. Owned ship setup uses 512 MiB for prebuilt apps. Both default to a 4 GiB disk floor. If either cannot be measured or is below its configured floor, deployment stops at the `preflight` stage. Prebuilt apps can use a lower measured memory floor because the host does not build them. Put the checkout and rootless Podman storage on the same filesystem; otherwise the disk check does not cover image storage.
+Before touching the checkout or deploying, the receiver checks Linux `MemAvailable` and free space on the checkout filesystem. Prebuilt apps default to a 512 MiB memory floor. Server builds default to 2 GiB. Both default to a 4 GiB disk floor. Missing or low measurements stop at the `preflight` stage. Keep the checkout and rootless Podman storage on the same filesystem when disk accounting matters.
 
-Compose builds have a configurable deadline, 10 minutes by default. The receiver starts each command in its own process group, sends `SIGKILL` to the build group when it exceeds the deadline, and never proceeds to optional tests or startup. This bounds a stuck build, but a killed build may leave intermediate Podman data for an operator to inspect and prune deliberately.
+Server builds have a deadline, 10 minutes by default. The receiver runs the command in its own process group and kills that group on deadline. It never proceeds to tests or startup. A killed build may leave Podman data for deliberate operator cleanup.
 
-The shipped systemd unit adds cgroup ceilings for the receiver and direct child processes:
+The systemd unit adds these default ceilings:
 
 ```ini
 MemoryHigh=1280M
@@ -82,7 +84,7 @@ TasksMax=512
 OOMPolicy=stop
 ```
 
-These defaults are intended to preserve a small host rather than make every framework build succeed. Tune them only after reserving capacity for the operating system, SSH, Caddy, and already-running applications. Podman-managed application containers need explicit Compose limits of their own:
+They protect a small host. Tune them after reserving capacity for the operating system, SSH, Caddy, and running apps. Set app limits in Compose:
 
 ```yaml
 services:
@@ -94,17 +96,19 @@ services:
           memory: 512M
 ```
 
-Preflight checks, deadlines, and cgroup ceilings are defense in depth, not a substitute for filesystem quotas, monitoring, backups, or testing builds away from a constrained production VPS.
+These checks are defense in depth. They do not replace filesystem quotas, monitoring, backups, or testing on another host.
 
 ## Image cleanup
 
-After a healthy deployment, the receiver keeps only the active image and one app-specific `rollback-<timestamp>-<commit>` tag by default. Rollback tag expires after 12 hours; startup restores expiry timers after service restarts. Receiver removes legacy `release-*`, `staging-*`, prior rollback, current upload, and upload tags for superseded commits before `podman image prune --force` removes dangling data.
+After a healthy deploy, the receiver keeps the active image and one app-specific `rollback-<timestamp>-<commit>` tag. The rollback tag expires after 12 hours. Startup restores expiry timers after service restart.
 
-`releaseRetention` accepts one or two total images and defaults to two. Image cleanup does not use `--all` or `system prune`, so running containers, volumes, and unrelated networks remain. Retention or cleanup failure logs a warning without turning a healthy deployment into a failed one.
+Cleanup removes legacy `release-*`, `staging-*`, prior rollback, current upload, and superseded upload tags, then prunes dangling images. `releaseRetention` accepts one or two total images and defaults to two. Cleanup never uses `--all` or `system prune`. Retention or cleanup failure logs a warning and does not fail a healthy deploy.
 
 ## Ports and Caddy
 
-Every app has an explicit Compose frontend and host port. Modern installations can use `["podman", "compose"]`; hosts with the standalone frontend can use `["podman-compose"]`. Legacy registrations containing `composeCommand: ["podman"]` normalize to the modern `podman compose` frontend before deploy or removal. Compose binds the app only to loopback:
+Each app has an explicit Compose frontend and host port. Current installs can use `["podman", "compose"]`; standalone hosts can use `["podman-compose"]`. Old `composeCommand: ["podman"]` registrations normalize before deploy or removal.
+
+Compose binds only loopback:
 
 ```yaml
 services:
@@ -113,30 +117,46 @@ services:
       - "127.0.0.1:${SHIBUMI_PORT}:3000"
 ```
 
-Caddy maps the public domain to that port. Managed app proxies use a 20-second `lb_try_duration`, so requests wait and retry when Compose briefly releases the loopback port during replacement. This bridges normal restart gaps without running two application containers. Existing in-flight requests and long-lived connections can still fail, and restarts exceeding the budget return an upstream error.
+Caddy maps the public domain to that port. Managed proxies use a 20-second `lb_try_duration`, so requests wait while Compose briefly releases the port during replacement. Existing long-lived connections can still fail, and a restart past that budget returns an upstream error.
 
-Each successful deployment log records elapsed time from replacement start until health passes, plus remaining or exceeded retry budget. This readiness time is a conservative upper bound for listener downtime. Read latest measurement with `shis logs <app-id>`; logs remain mode `0600` and bounded to 256 KiB. `shis caddy-refresh <app-id>` adds retry budget to an existing managed fragment through constrained helper, preserving all other Caddy settings. Other Compose services remain private on the application network. Ports are operational configuration, not secrets, but real machine inventory does not belong in the public repository.
+Each successful deploy log records replacement time and remaining retry budget. Read it with `shis logs <app-id>`. Logs use mode `0600` and stay below 256 KiB. `shis caddy-refresh <app-id>` adds retry budget to an existing managed fragment without changing other Caddy settings.
 
-HMAC authentication prevents forged hooks from authorizing a deployment; it does not absorb volumetric traffic. Reject abuse at Caddy, the firewall, or an upstream provider before it reaches Bun. An optional source-IP allowlist must be generated from GitHub's current `hooks` CIDRs at `https://api.github.com/meta` and updated automatically. Do not copy a static range into the project and forget it, and do not trust public `X-Forwarded-For` values unless the listener remains loopback-only behind a correctly configured proxy.
+HMAC blocks forged hooks, not traffic volume. Reject abuse at Caddy, the firewall, or an upstream provider. A source-IP allowlist must come from GitHub's current `hooks` ranges at `https://api.github.com/meta` and update automatically. Do not trust public `X-Forwarded-For` values unless the listener stays loopback-only behind a correctly configured proxy.
 
 ## Secrets
 
-The public JSON configuration stores only an environment-variable name. The HMAC secret itself belongs in a mode-`0600` environment file or systemd credential. Use a different random secret for every app.
+Public config stores only the environment-variable name. The HMAC secret belongs in a mode-`0600` environment file or systemd credential. Every app gets a different random secret.
 
-Never commit webhook secrets, application keys, repository credentials, registry credentials, TLS private keys, database data, backups, or raw webhook payload logs.
+Do not commit webhook secrets, app keys, repository credentials, registry credentials, TLS keys, database data, backups, or raw webhook logs.
 
-## Service installation
+## Installation
 
-The first release targets Bun and a systemd user service. `install.sh` is a Bash bootstrap for Linux deployment users; it installs Bun when missing, then hands interactive setup to `bunx shibumi-server@latest`. Direct `bunx shibumi-server@<version> init` remains the pinned automation path. Initialization copies the exact invoked package into a staged versioned release directory, installs lockfile-pinned production dependencies with lifecycle scripts disabled, atomically updates a local `current` symlink and compatible `~/.local/bin/shis` and `~/.local/bin/shibumi-server` launchers, creates mode-`0600` config and secret files, and writes the user unit. The unit and launcher execute that local copy and never download through `bunx` during startup, restart, or app registration. Re-running `init` preserves machine-owned files and lets an active service move to the newly invoked version. `shis update` validates the stable version reported by npm, invokes that exact package through Bun, and reuses `init`; routine update checks remain short, non-blocking, and disabled in `serve`.
+The first release targets Bun and a systemd user service. `install.sh` installs Bun when missing, then hands setup to `bunx shibumi-server@latest`. Direct `bunx shibumi-server@<version> init` remains the fixed automation path.
 
-`add <domain>` verifies DNS, retrying transient A/AAAA failures and falling back to the server's OS resolver. Confirmed absent records, records pointing elsewhere, Cloudflare-proxied records, and unavailable resolvers are distinct states; lookup failure never produces DNS setup instructions. It then detects whether Caddy already serves the hostname, accepts canonical repository names or HTTPS GitHub URLs, prompts for a missing repository or absolute checkout with a `~/shibumi/<app-id>` default, and assigns the first unassigned and locally available loopback port above `9000`. Automation can provide all three values as flags and avoid loading the prompt dependency. An app-owned test command is optional. The domain becomes a safe app ID by escaping literal hyphens as `--` before replacing dots with `-`, preventing dashed labels from colliding with domain separators. The rest of the deployment values come only from local prompts, flags, and safe defaults. Registration validates the complete config before writing it, creates a different random 32-byte HMAC secret for each app, and restarts the service. `add --dry-run` follows the same DNS and Caddy detection, prompt, port-selection, and validation path but returns the candidate configuration before cloning, reading or writing secrets, invoking sudo, writing config, or changing Caddy or systemd. Real registration verifies an existing checkout origin or clones a public repository. A clean existing checkout fetches and fast-forwards to the configured origin ref; dirty or diverged work is never reset. Missing Compose configuration points back to source: add and push the file, or select its relative path. Private repositories must already have working server-side Git authentication.
+Initialization stages the exact invoked package, installs locked production dependencies with lifecycle scripts disabled, updates the local `current` link and `shis` launchers, writes mode-`0600` config and secret files, and writes the user unit. Startup, restart, and app registration use that local copy. They never download through `bunx`. Re-running `init` keeps machine-owned files and moves the service to the invoked version.
 
-Caddy integration is declarative and constrained. New domains get per-site fragments with Zstd and gzip compression, indexing allowed, safe baseline headers, and bounded JSON access logs by default. Existing domains preserve their source block and import only a fixed webhook route unless the operator explicitly chooses rewrite. A root-owned helper accepts schema-validated apply or remove JSON through stdin, computes all paths itself, backs up source files, writes atomically, validates the complete Caddy configuration, reloads without stopping active connections, and restores the backup on failure. Shibumi explains the exact privileged action before `sudo` receives the password directly.
+`shis update` validates npm's stable version, invokes that exact package through Bun, and reuses `init`. Routine update checks are short and non-blocking, and `serve` skips them.
 
-Each app can export `shibumi-server.json`, a versioned client document containing domain, app ID, repository, branch, webhook URL, service, app port, health path, deployment mode, image platform, and a confirmed server hostname. It excludes secrets, checkout paths, SSH users, aliases, and credentials. Webhook deployments write mode-restricted status snapshots atomically so a client can poll `status --json` over existing SSH access without a public status endpoint or GitHub deployment token. Repeating the same domain registration validates stored settings, skips checkout and Caddy mutation, preserves the secret, and restarts the service; conflicting settings fail closed. `list` exposes registered domain, app ID, repository, loopback upstream, checkout, and Caddy ownership through branded output. `remove` resolves a domain or app ID, confirms the preserved and removed state, removes the managed Caddy fragment through the constrained helper, then deletes app config, its secret, deployment status, and containers. Checkout, volumes, images, and GitHub webhook remain. Removing the last app stops the service.
+`add <domain>` checks DNS, retries transient failures, and falls back to the OS resolver. Missing records, records elsewhere, Cloudflare-proxied records, and resolver failure remain separate states. Lookup failure never turns into DNS setup advice.
 
-Uninstall requires confirmation, stops and disables the webhook service, then removes its unit, launcher, and installed releases while preserving config and secrets by default. `--yes` is the non-purge automation path. `--purge` uses a stronger confirmation and removes those machine-owned files; `--purge --yes` is the explicit purge automation path. Neither mode removes app checkouts, containers, Caddy routes, or GitHub settings.
+Registration then detects existing Caddy config, accepts repository names or GitHub URLs, asks for missing values, and picks the first free loopback port above `9000`. Automation can provide all three values as flags without loading prompt dependencies. App tests are optional.
 
-Initialization does not clone repositories, edit Caddy, call GitHub, or print secret values. Interactive app registration can clone a public repository and apply reviewed Caddy changes only after explicit confirmation and sudo authorization. GitHub webhook creation remains a client action over `gh`; the server exposes its secret only as JSON through an explicit SSH command. Verified webhook deliveries write bounded, mode-`0600` JSONL history containing time, app ID, delivery ID, commit, result, failed stage, and duration. Each app also keeps one mode-`0600`, 256-KiB deployment log; a new deployment atomically replaces it. Payloads, signatures, secrets, and request headers are never retained. `history` reads these records locally or over SSH. `rollback` restores the one retained previous image without fetching, building, or running app tests, recreates the service, and verifies health. Successful rollback rotates retained tags so the image replaced by rollback becomes the next rollback image. Before startup, deployment records the running container image. A startup or health failure retags that image under the Compose image name, recreates the previous service without building, and verifies its health before reporting the attempted deployment as failed.
+Dots become hyphens in the app ID; literal hyphens first become double hyphens. This keeps `example.com` and `example-com.example` from colliding. Repeating the same registration keeps stored values, secret, checkout, and Caddy config. Conflicting values fail.
 
-Durable replay state, GitHub commit statuses, GHCR, and Node/`npx` compatibility remain later work.
+`add --dry-run` follows the same checks but changes no config, secrets, filesystem, systemd, containers, Caddy, or GitHub. Real registration accepts a clean matching checkout or clones a public repository. Dirty, diverged, or mismatched checkouts fail with recovery steps. Private repositories need server-side Git authentication first.
+
+Caddy changes are declarative. New domains get per-site fragments with compression, safe headers, and bounded JSON logs. Existing domains keep their source block and import only the webhook route unless the operator chooses rewrite. The root helper accepts validated JSON, computes paths, backs up source, writes atomically, validates full config, reloads, and restores backup on failure. Setup explains the privileged action before sudo receives the password.
+
+Each app can export `shibumi-server.json` with domain, app ID, repository, branch, webhook URL, service, app port, health path, mode, image platform, and confirmed server hostname. It excludes secrets, checkout paths, SSH users, aliases, and credentials. Deployment status writes mode-restricted snapshots so a client can poll `status --json` over SSH.
+
+`list` shows registered apps and their Caddy ownership. `remove` resolves a domain or app ID, removes managed config, secret, status, route, and containers, and keeps checkout, volumes, images, and webhook. Removing the last app stops the service.
+
+Uninstall asks first, stops and disables the service, then removes its unit, launchers, and installed releases. Config and secrets stay by default. `--yes` is the automation path. `--purge` asks again and removes those machine-owned files; automation must pass `--purge --yes`.
+
+Initialization does not clone repositories, edit Caddy, call GitHub, or print secrets. App registration can clone and apply reviewed Caddy changes after confirmation and sudo. GitHub webhook creation remains a client action through `gh`. The server exposes its secret only as JSON through an explicit SSH command.
+
+Verified deployments write bounded mode-`0600` JSONL history with time, app ID, delivery ID, commit, result, failed stage, and duration. Each app also keeps one mode-`0600` deployment log below 256 KiB. Payloads, signatures, secrets, and headers are never retained.
+
+`rollback` restores the retained previous image without fetching, building, or running app tests. It starts the service and checks health. A successful rollback keeps the replaced image for the next rollback. Before startup, deployment records the running image. Failed startup or health restores it and checks it before reporting failure.
+
+Durable replay state, GitHub commit statuses, GHCR, and Node/`npx` support are planned but not built.
