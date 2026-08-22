@@ -19,9 +19,11 @@ test("published files use an explicit allowlist", () => {
   expect(packageJson.files).not.toContain(".env");
 });
 
-test("integration app uses the pinned default Bun image", async () => {
-  expect(await readFile(resolve(import.meta.dir, "integration/fixture/Containerfile"), "utf8"))
-    .toStartWith("FROM docker.io/oven/bun:1.4.0-alpine\n");
+test("website, generated apps, and integration use the default Bun image", async () => {
+  const from = "FROM oven/bun:alpine";
+  expect(await readFile(resolve(import.meta.dir, "../Dockerfile"), "utf8")).toStartWith(`${from} AS build\n`);
+  expect(await readFile(resolve(import.meta.dir, "integration/fixture/Containerfile"), "utf8")).toStartWith(`${from}\n`);
+  expect(await readFile(resolve(import.meta.dir, "../scripts/ship.ts"), "utf8")).toContain(`Dockerfile: \`${from}\n`);
 });
 
 test("published runtime lock matches Bun lock", async () => {

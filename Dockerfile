@@ -1,4 +1,4 @@
-FROM docker.io/oven/bun:1.4.0-alpine AS build
+FROM oven/bun:alpine AS build
 WORKDIR /app
 COPY package.json README.md ./
 COPY scripts/build-site.ts ./scripts/build-site.ts
