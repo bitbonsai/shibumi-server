@@ -60,6 +60,21 @@ body {
     background: var(--bg);
 }
 
+/* Kozo paper texture, light theme only; dark stays flat ink. The image lives
+   next to this stylesheet in every consumer, hence the relative URL. */
+body {
+    background-image: url("kozo.webp");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+}
+@media (prefers-color-scheme: dark) {
+    body { background-image: none; }
+}
+[data-theme="light"] body { background-image: url("kozo.webp"); }
+[data-theme="dark"] body { background-image: none; }
+
 h1, h2, h3 {
     font-family: var(--font-serif);
 }

@@ -25,7 +25,7 @@ const SERVER_HOSTNAME = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 const COMMIT = /^[a-f0-9]{40}$/;
 const SERVER_CLI = "~/.local/bin/shibumi-server";
 const LATEST_SOURCE = "https://shibumistack.dev/ship/latest.ts";
-const CURRENT_SOURCE = "https://shibumistack.dev/ship/v45.ts";
+const CURRENT_SOURCE = "https://shibumistack.dev/ship/v46.ts";
 let sshControlDirectory: string | undefined;
 let sshControlTarget: string | undefined;
 
@@ -1703,13 +1703,13 @@ function portIsBusy(port: number): Promise<boolean> {
   });
 }
 
-export function formatDevStartup(port: number, domain: string, time: string, color = false): string {
+export function formatDevStartup(port: number, domain: string | undefined, time: string, color = false): string {
   const paint = (code: string, value: string) => color ? `\x1b[${code}m${value}\x1b[0m` : value;
   const row = (label: string, url: string) => `${paint("2", "┃")} ${label.padEnd(8)} ${paint("34", url)}`;
   return [
     `${paint("38;5;208", "渋み")}  ship dev`,
     row("Local", `http://localhost:${port}/`),
-    row("Remote", `https://${domain}`),
+    ...(domain ? [row("Remote", `https://${domain}`)] : []),
     `${paint("2", time)} starting app dev server...`,
   ].join("\n");
 }
@@ -1719,30 +1719,33 @@ function localTime(date = new Date()): string {
 }
 
 async function runDev(): Promise<void> {
+  // Dev must work on a fresh scaffold, before any server exists: without
+  // setup, fall back to the Shibumi port convention (registered apps get the
+  // first free port above 9000) and skip the Remote row.
   const config = await readConfig();
-  if (!config) throw new Error("Shibumi setup is missing.\n\nNext: run bun ship:setup.");
-  if (await portIsBusy(config.port)) {
+  const port = config?.port ?? 9000;
+  if (await portIsBusy(port)) {
     const lsof = Bun.which("lsof");
     const fuser = Bun.which("fuser");
-    if (!lsof && !fuser) throw new Error(`Port ${config.port} is already in use.\n\nNext: stop that process, then run bun dev again.`);
+    if (!lsof && !fuser) throw new Error(`Port ${port} is already in use.\n\nNext: stop that process, then run bun dev again.`);
     const found = lsof
-      ? await run([lsof, "-nP", `-iTCP:${config.port}`, "-sTCP:LISTEN", "-t"], { allowFailure: true })
-      : await run([fuser!, "-n", "tcp", String(config.port)], { allowFailure: true });
+      ? await run([lsof, "-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { allowFailure: true })
+      : await run([fuser!, "-n", "tcp", String(port)], { allowFailure: true });
     const pids = [...new Set(`${found.stdout} ${found.stderr}`.split(/\s+/).filter((value) => /^\d+$/.test(value)).map(Number))];
-    if (pids.length === 0) throw new Error(`Port ${config.port} is already in use.\n\nNext: stop that process, then run bun dev again.`);
+    if (pids.length === 0) throw new Error(`Port ${port} is already in use.\n\nNext: stop that process, then run bun dev again.`);
     const details = await run(["ps", "-o", "pid=,comm=", "-p", pids.join(",")], { allowFailure: true });
-    log.warn(`Port ${config.port} is in use${details.stdout.trim() ? `:\n${details.stdout.trim()}` : ""}`);
+    log.warn(`Port ${port} is in use${details.stdout.trim() ? `:\n${details.stdout.trim()}` : ""}`);
     const accepted = await confirm({ message: "Stop it and start this project?", initialValue: false });
     if (isCancel(accepted) || !accepted) return;
     for (const pid of pids) process.kill(pid, "SIGTERM");
     const deadline = Date.now() + 5_000;
-    while (await portIsBusy(config.port) && Date.now() < deadline) await Bun.sleep(100);
-    if (await portIsBusy(config.port)) throw new Error(`Port ${config.port} did not stop.\n\nNext: stop PID ${pids.join(", ")} manually, then run bun dev again.`);
+    while (await portIsBusy(port) && Date.now() < deadline) await Bun.sleep(100);
+    if (await portIsBusy(port)) throw new Error(`Port ${port} did not stop.\n\nNext: stop PID ${pids.join(", ")} manually, then run bun dev again.`);
   }
-  process.stdout.write(`${formatDevStartup(config.port, config.domain, localTime(), supportsTerminalColor())}\n`);
+  process.stdout.write(`${formatDevStartup(port, config?.domain, localTime(), supportsTerminalColor())}\n`);
   const child = Bun.spawn([process.execPath, "run", "dev:app"], {
     cwd: root,
-    env: { ...process.env, PORT: String(config.port), SHIBUMI_PORT: String(config.port) },
+    env: { ...process.env, PORT: String(port), SHIBUMI_PORT: String(port) },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
@@ -1808,7 +1811,7 @@ export async function runShip(): Promise<void> {
         ? await confirm({ message: "Ship now?", initialValue: true })
         : false;
       if (shipNow !== true || isCancel(shipNow)) {
-        outro(`${accent("Next:")} ${result.config.trigger === "github-push" ? "git push deploys automatically" : "bun ship"}`);
+        outro(`${accent("Next:")} ${result.config.trigger === "github-push" ? `git push origin ${result.config.branch} to deploy` : "bun ship"}`);
         return;
       }
     }
