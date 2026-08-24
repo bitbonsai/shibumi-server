@@ -34,6 +34,11 @@ describe("parseCliArgs env", () => {
     expect(parseCliArgs(["env", "rm", "my-app", "A", "B"])).toEqual({ name: "env", action: "rm", appId: "my-app", keys: ["A", "B"], json: false });
   });
 
+  test("rejects an app id that could traverse the filesystem", () => {
+    expect(() => parseCliArgs(["env", "set", "../etc"])).toThrow("valid app id");
+    expect(() => parseCliArgs(["env", "list", "a/b"])).toThrow("valid app id");
+  });
+
   test("rejects bad forms", () => {
     expect(() => parseCliArgs(["env", "bogus", "my-app"])).toThrow("set, list, or rm");
     expect(() => parseCliArgs(["env", "set"])).toThrow("app id");

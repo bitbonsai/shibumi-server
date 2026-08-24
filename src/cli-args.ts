@@ -300,6 +300,9 @@ export function parseCliArgs(argv: string[]): CliCommand {
       fail("env requires set, list, or rm");
     }
     if (!appId || appId.startsWith("--")) fail("env requires an app id");
+    // Guard the app id before it becomes a filesystem path (env/<app-id>.env):
+    // no traversal, matches the app-id grammar.
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(appId)) fail("env app id is not a valid app id");
     if (action === "list") {
       const jsonCount = rest.filter((arg) => arg === "--json").length;
       if (rest.some((arg) => arg !== "--json") || jsonCount > 1) fail("env list accepts only --json");
