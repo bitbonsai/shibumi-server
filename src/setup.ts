@@ -12,7 +12,7 @@ import { DeploymentStatusStore } from "./status";
 import { checkDomainDns, detectPublicAddresses } from "./domain";
 import { APP_RETRY_BUDGET_MS, detectCaddySite, type CaddySiteOptions, type Compression, type HeaderProfile, type Indexing } from "./caddy";
 import { applyCaddyWithSudo, authorizeCaddySudo, type CaddyApplyRequest } from "./caddy-sudo";
-import { addApp, appIdForDomain, ensurePathIntegration, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, setAppRepository, type AddAppOptions, type CheckoutMismatch } from "./install";
+import { addApp, appIdForDomain, ensurePathIntegration, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, setAppRepository, SystemdUserServiceManager, trySymlinkPath, type AddAppOptions, type CheckoutManager, type CheckoutMismatch, type ConfirmCheckoutReplacement, type PathIntegrationResult, type ServiceManager } from "./install";
 import { parseGitHubRepositoryTarget } from "./repository";
 import { brand, command, next, SHIP_INSTALL_COMMAND } from "./terminal-ui";
 
@@ -270,14 +270,61 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}, home = h
   };
 }
 
-export async function confirmCheckoutReplacement(mismatch: CheckoutMismatch, yes = false): Promise<boolean> {
-  log.warn(`Checkout ${mismatch.checkout} has origin that does not match ${mismatch.repository}`);
+export interface InteractiveUi {
+  intro: typeof intro;
+  outro: typeof outro;
+  cancel: typeof cancel;
+  confirm: typeof confirm;
+  spinner: typeof spinner;
+  log: typeof log;
+}
+
+const defaultUi: InteractiveUi = { intro, outro, cancel, confirm, spinner, log };
+
+export async function confirmCheckoutReplacement(
+  mismatch: CheckoutMismatch,
+  yes = false,
+  ui: { log: Pick<InteractiveUi["log"], "warn">; confirm: InteractiveUi["confirm"] } = defaultUi,
+): Promise<boolean> {
+  ui.log.warn(`Checkout ${mismatch.checkout} has origin that does not match ${mismatch.repository}`);
   if (yes) return true;
-  const accepted = await confirm({
+  const accepted = await ui.confirm({
     message: `Move it to ${basename(mismatch.backup)} and clone ${mismatch.repository}?`,
     initialValue: false,
   });
   return !cancelled(accepted) && accepted;
+}
+
+interface ProgressLike {
+  start(message: string): void;
+  stop(message?: string): void;
+  error(message?: string): void;
+}
+
+// The spinner and an interactive confirm cannot render at once. This wraps a
+// confirmReplacement callback so it pauses the given spinner before asking,
+// and resumes it only if the answer was yes — independent of @clack/prompts,
+// so it can be exercised with a fake spinner in tests.
+export function withSpinnerPause(
+  progress: ProgressLike,
+  resumeMessage: () => string,
+  confirmReplacement: ConfirmCheckoutReplacement,
+): { confirm: ConfirmCheckoutReplacement; active(): boolean; start(): void } {
+  let active = false;
+  const start = () => {
+    progress.start(resumeMessage());
+    active = true;
+  };
+  const confirmWithPause: ConfirmCheckoutReplacement = async (mismatch) => {
+    if (active) {
+      progress.stop(`Checkout ${basename(mismatch.checkout)} needs attention`);
+      active = false;
+    }
+    const proceed = await confirmReplacement(mismatch);
+    if (proceed) start();
+    return proceed;
+  };
+  return { confirm: confirmWithPause, active: () => active, start };
 }
 
 export async function confirmUninstall(purge: boolean): Promise<boolean> {
@@ -443,15 +490,24 @@ export async function runInteractiveSetup(options: {
     throw error;
   }
 
-  let pathIntegration = await ensurePathIntegration(options.home, installation.paths);
-  if (pathIntegration.method !== "symlink") {
+  // Detection first, mutation second: a passwordless symlink attempt touches
+  // nothing on disk, so it's safe to try before asking. ~/.profile is only
+  // ever written once we know the symlink was declined or didn't work.
+  const initialAttempt = await trySymlinkPath(installation.paths);
+  let pathIntegration: PathIntegrationResult;
+  if (initialAttempt.symlinked) {
+    pathIntegration = { method: "symlink", detail: `${initialAttempt.systemBinDirectory}/shis -> ${installation.paths.shortLauncher}` };
+  } else {
     const trySudo = await confirm({
       message: "Symlink shis into /usr/local/bin so non-interactive SSH sessions find it? sudo will ask for your password directly.",
       initialValue: true,
     });
-    if (!cancelled(trySudo) && trySudo) {
-      pathIntegration = await ensurePathIntegration(options.home, installation.paths, { allowSudoPrompt: true });
-    }
+    const sudoAttempt = !cancelled(trySudo) && trySudo
+      ? await trySymlinkPath(installation.paths, { allowSudoPrompt: true })
+      : { symlinked: false, systemBinDirectory: initialAttempt.systemBinDirectory };
+    pathIntegration = sudoAttempt.symlinked
+      ? { method: "symlink", detail: `${sudoAttempt.systemBinDirectory}/shis -> ${installation.paths.shortLauncher}` }
+      : await ensurePathIntegration(options.home, installation.paths);
   }
 
   outro([
@@ -548,7 +604,7 @@ export async function runRemoveApp(home: string, selector: string, yes = false):
   }
   outro([
     `Kept: checkout ${app.checkout}, volumes, images`,
-    "Re-adding under a different repo? Delete the checkout first.",
+    "Re-adding under a different repo? shis add and shis set-repository move the old checkout to .bak automatically now.",
     result.remainingApps === 0
       ? "No apps remain. shibumi-server service stopped."
       : `${result.remainingApps} app${result.remainingApps === 1 ? "" : "s"} remain. shibumi-server restarted.`,
@@ -781,23 +837,13 @@ export async function runInteractiveAdd(options: { home: string; yes?: boolean }
 
   const action = answers.dryRun ? "preview" : "add";
   const progress = spinner();
-  let spinnerActive = false;
-  const startProgress = () => {
-    progress.start(`${answers.dryRun ? "Previewing" : "Adding"} ${answers.domain}`);
-    spinnerActive = true;
-  };
-  // The spinner and an interactive confirm cannot render at once; pause it for
-  // the checkout-replacement question, then resume only if the user accepts.
-  const checkouts = new GitCheckoutManager(new BunCommandRunner(), async (mismatch) => {
-    if (spinnerActive) {
-      progress.stop(`Checkout ${basename(mismatch.checkout)} needs attention`);
-      spinnerActive = false;
-    }
-    const proceed = await confirmCheckoutReplacement(mismatch, yes);
-    if (proceed) startProgress();
-    return proceed;
-  });
-  startProgress();
+  const pause = withSpinnerPause(
+    progress,
+    () => `${answers.dryRun ? "Previewing" : "Adding"} ${answers.domain}`,
+    (mismatch) => confirmCheckoutReplacement(mismatch, yes),
+  );
+  const checkouts = new GitCheckoutManager(new BunCommandRunner(), pause.confirm);
+  pause.start();
   let app;
   try {
     app = await addApp({
@@ -806,9 +852,8 @@ export async function runInteractiveAdd(options: { home: string; yes?: boolean }
       caddyMode: existingCaddyMode ?? (caddy?.mode === "preserve" ? "preserve" : "managed"),
     }, undefined, checkouts);
     progress.stop(`${answers.dryRun ? "Previewed" : existingCaddyMode ? "Already configured" : "Added"} ${answers.domain}`);
-    spinnerActive = false;
   } catch (error) {
-    if (spinnerActive) progress.error(`Failed to ${action} ${answers.domain}`);
+    if (pause.active()) progress.error(`Failed to ${action} ${answers.domain}`);
     else log.error(`Failed to ${action} ${answers.domain}`);
     throw error;
   }
@@ -846,36 +891,44 @@ export async function runSetRepository(
   repository: string,
   ref: string | undefined,
   yes = false,
+  services: ServiceManager = new SystemdUserServiceManager(),
+  checkouts: CheckoutManager = new GitCheckoutManager(),
+  ui: InteractiveUi = defaultUi,
 ): Promise<void> {
-  intro(brand());
+  ui.intro(brand());
   const app = (await registeredApps(home)).find((item) => item.appId === selector || item.domain === selector);
   if (!app) throw new Error(`unknown app: ${selector}.\n\nNext: run shis list and choose a domain or app ID.`);
   const backup = `${app.checkout}.bak`;
-  log.info([
+  // Check before asking: there's no point confirming a move that's going to
+  // be refused anyway.
+  if (existsSync(backup)) {
+    throw new Error(`${backup} already exists.\n\nNext: remove or rename ${backup}, then rerun set-repository.`);
+  }
+  ui.log.info([
     `App         ${app.domain} (${app.appId})`,
     `Repository  github:${app.repository} -> github:${repository}`,
-    `Checkout    ${app.checkout} moves to ${backup}; fresh clone from github:${repository}`,
+    `Checkout    ${app.checkout} moves to ${backup}; fresh clone from github:${repository} (Compose file is re-detected)`,
   ].join("\n"));
   if (!yes) {
-    const accepted = await confirm({
+    const accepted = await ui.confirm({
       message: `Repoint ${app.appId}? Old checkout moves to .bak, fresh clone.`,
       initialValue: false,
     });
     if (cancelled(accepted) || !accepted) {
-      cancel("set-repository cancelled.");
+      ui.cancel("set-repository cancelled.");
       return;
     }
   }
 
-  const progress = spinner();
+  const progress = ui.spinner();
   progress.start(`Cloning github:${repository}`);
   let result;
   try {
-    result = await setAppRepository(home, app.appId, repository, ref);
+    result = await setAppRepository(home, app.appId, repository, ref, services, checkouts);
     progress.stop(`Repository updated for ${app.domain}`);
   } catch (error) {
     progress.error(`Could not repoint ${app.domain}`);
     throw error;
   }
-  outro(`Repository updated. Next deploy ships from github:${result.repository}.`);
+  ui.outro(`Repository updated. Next deploy ships from github:${result.repository}.`);
 }

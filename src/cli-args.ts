@@ -1,5 +1,15 @@
 import { parseGitHubRepositoryTarget } from "./repository";
 
+// Extracted so it's unit-testable: cli.ts runs its whole dispatch as a
+// top-level side effect on import, so its own decision logic can't be
+// exercised directly from a test without actually invoking the CLI.
+// Without --yes, a checkout-replacement confirm needs a TTY to answer it;
+// a scripted `ssh host shis add ...` has none, so offering the prompt there
+// would hang forever instead of failing fast.
+export function shouldOfferCheckoutReplacement(yes: boolean, isTTY: boolean | undefined): boolean {
+  return yes || Boolean(isTTY);
+}
+
 export type CliCommand =
   | { name: "help" }
   | { name: "version" }

@@ -62,8 +62,13 @@ export async function inspectPrebuiltImageMetadata(
   if (labels[REVISION_LABEL] !== commit) throw new Error("prebuilt image revision does not match commit");
   if (labels[SOURCE_LABEL] !== `https://github.com/${repository}`) {
     const source = typeof labels[SOURCE_LABEL] === "string" ? labels[SOURCE_LABEL] : undefined;
-    const actualRepository = source?.startsWith("https://github.com/") ? source.slice("https://github.com/".length) : undefined;
-    throw new Error(`prebuilt image source does not match repository.\n\nNext: if ${appId} should track ${actualRepository ?? "the built image's repository"} instead, run: ssh <host> shis set-repository ${appId} ${actualRepository ? `github:${actualRepository}` : "<repository>"}`);
+    const actualRepository = source?.startsWith("https://github.com/")
+      ? source.slice("https://github.com/".length).replace(/\.git$/, "")
+      : undefined;
+    // `set-repository` needs --yes here: this text is relayed to a local
+    // `ship` client over SSH with no allocated TTY, so an interactive
+    // confirm would hang rather than fail.
+    throw new Error(`prebuilt image source does not match repository.\n\nNext: if ${appId} should track ${actualRepository ?? "the built image's repository"} instead, run: ssh <host> shis set-repository ${appId} ${actualRepository ? `github:${actualRepository}` : "<repository>"} --yes`);
   }
   if (typeof labels[TREE_LABEL] !== "string" || !COMMIT.test(labels[TREE_LABEL])) throw new Error("prebuilt image source tree is invalid");
   if (tree && labels[TREE_LABEL] !== tree) throw new Error("prebuilt image source tree does not match commit");

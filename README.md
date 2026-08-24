@@ -134,7 +134,7 @@ Point an already-registered app at a different repository:
 shis set-repository example.com github:owner/new-repository
 ```
 
-The old checkout moves to `<checkout>.bak`, Shibumi clones the new repository in its place, and the registration updates, without touching Caddy or re-registering the app. `--yes` skips confirmation. It refuses only if `<checkout>.bak` already exists. `shis add` offers the same move when it finds a checkout whose origin doesn't match the repository you're adding.
+The old checkout moves to `<checkout>.bak`, Shibumi clones the new repository in its place, and the registration updates, without touching Caddy or re-registering the app. The Compose file path is re-detected in the new repository rather than carried over, and a failed clone restores the original checkout. `--yes` skips confirmation. It refuses only if `<checkout>.bak` already exists. `shis add` offers the same move when it finds a checkout whose origin doesn't match the repository you're adding.
 
 Set per-app environment values and secrets, injected into the container at each deploy:
 

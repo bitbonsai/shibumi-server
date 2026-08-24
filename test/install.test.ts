@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { addApp, appIdForDomain, enablePrebuiltApp, ensurePathIntegration, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, setAppRepository, setDeploymentMode, SystemdUserServiceManager, uninstallInstallation, type CheckoutManager, type ServiceManager } from "../src/install";
+import { addApp, appIdForDomain, enablePrebuiltApp, ensurePathIntegration, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, setAppRepository, setDeploymentMode, SystemdUserServiceManager, trySymlinkPath, uninstallInstallation, type CheckoutManager, type ServiceManager } from "../src/install";
 import packageJson from "../package.json";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
 
@@ -565,7 +565,12 @@ describe("app repository repointing", () => {
     expect(services.restarts).toBe(2);
   });
 
-  test("reverts the checkout rename when the fresh clone fails", async () => {
+  test("reverts the checkout rename when the fresh clone fails after already writing files", async () => {
+    // A real clone can fail partway through a later step (e.g. Compose-file
+    // detection) after it has already populated the checkout directory. The
+    // fake here reproduces that by writing into options.checkout before
+    // throwing, so the revert has to clear a non-empty directory rather than
+    // rename onto empty space.
     const home = await temporaryHome();
     const { services } = await initialized(home);
     const root = await temporaryHome();
@@ -573,12 +578,69 @@ describe("app repository repointing", () => {
     await mkdir(checkout, { recursive: true });
     await writeFile(join(checkout, "marker.txt"), "kept\n");
     await addApp(appOptions(home, { checkout }), services, checkouts);
-    const failingClone: CheckoutManager = { async prepare() { throw new Error("cannot clone owner/new-repository"); } };
+    const failingClone: CheckoutManager = {
+      async prepare(options) {
+        await mkdir(options.checkout, { recursive: true });
+        await writeFile(join(options.checkout, "partial.txt"), "new repo content\n");
+        throw new Error("cannot clone owner/new-repository");
+      },
+    };
 
     await expect(setAppRepository(home, "example-com", "owner/new-repository", undefined, services, failingClone))
       .rejects.toThrow("cannot clone");
 
     expect(await readFile(join(checkout, "marker.txt"), "utf8")).toBe("kept\n");
+    expect(await stat(join(checkout, "partial.txt")).then(() => true, () => false)).toBe(false);
+    const config = JSON.parse(await readFile(installationPaths(home).config, "utf8"));
+    expect(config.apps["example-com"].repository).toBe("owner/repository");
+  });
+
+  test("wraps the clone error with the .bak location when the revert itself fails", async () => {
+    const home = await temporaryHome();
+    const { services } = await initialized(home);
+    const root = await temporaryHome();
+    const checkout = join(root, "example-com");
+    await mkdir(checkout, { recursive: true });
+    await addApp(appOptions(home, { checkout }), services, checkouts);
+    const backup = `${checkout}.bak`;
+    const sabotagedClone: CheckoutManager = {
+      async prepare() {
+        // Simulate the backup disappearing out from under us mid-clone, so
+        // the revert (renaming it back) cannot succeed either.
+        await rm(backup, { recursive: true, force: true });
+        throw new Error("cannot clone owner/new-repository");
+      },
+    };
+
+    const failure = await setAppRepository(home, "example-com", "owner/new-repository", undefined, services, sabotagedClone)
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("cannot clone");
+    expect((failure as Error).message).toContain(backup);
+  });
+
+  test("reverts the checkout when the post-clone config candidate fails validation", async () => {
+    const home = await temporaryHome();
+    const { services } = await initialized(home);
+    const root = await temporaryHome();
+    const checkout = join(root, "example-com");
+    await mkdir(checkout, { recursive: true });
+    await writeFile(join(checkout, "marker.txt"), "kept\n");
+    await addApp(appOptions(home, { checkout }), services, checkouts);
+    const escapingCompose: CheckoutManager = {
+      async prepare(options) {
+        await mkdir(options.checkout, { recursive: true });
+        await writeFile(join(options.checkout, "cloned.txt"), "new repo\n");
+        return "../escape.yaml";
+      },
+    };
+
+    await expect(setAppRepository(home, "example-com", "owner/new-repository", undefined, services, escapingCompose))
+      .rejects.toThrow("composeFile must stay inside checkout");
+
+    expect(await readFile(join(checkout, "marker.txt"), "utf8")).toBe("kept\n");
+    expect(await stat(join(checkout, "cloned.txt")).then(() => true, () => false)).toBe(false);
     const config = JSON.parse(await readFile(installationPaths(home).config, "utf8"));
     expect(config.apps["example-com"].repository).toBe("owner/repository");
   });
@@ -669,8 +731,103 @@ describe("PATH integration", () => {
     const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
 
     expect(outcome.method).toBe("profile-existing");
+    // The login-shell caveat and sudo remedy must survive even when the
+    // fallback finds the line already there, not just on the first write.
+    expect(outcome.detail).toContain("only takes effect for login shells");
+    expect(outcome.detail).toContain(`sudo ln -sf ${result.paths.shortLauncher} ${systemBinDirectory}/shis`);
     const profile = await readFile(join(home, ".profile"), "utf8");
     expect(profile.split(result.paths.binDirectory)).toHaveLength(2);
+  });
+
+  test("does not treat an unrelated mention of the bin directory as already on PATH", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const systemBinDirectory = join(await temporaryHome(), "not-writable-at-all-mention");
+    await writeFile(join(home, ".profile"), `# I mention ${result.paths.binDirectory} here but never export it\n`);
+    const runner = new FakeRunner();
+    runner.results = [{ exitCode: 1, stdout: "", stderr: "" }];
+
+    const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
+
+    expect(outcome.method).toBe("profile-appended");
+    const profile = await readFile(join(home, ".profile"), "utf8");
+    expect(profile).toContain(`export PATH="${result.paths.binDirectory}:$PATH"`);
+  });
+
+  test("does not clobber a pre-existing file at the launcher path that shibumi-server did not create", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const systemBinDirectory = join(await temporaryHome(), "usr-local-bin-foreign");
+    await mkdir(systemBinDirectory, { recursive: true });
+    await writeFile(join(systemBinDirectory, "shis"), "#!/bin/sh\necho not shibumi\n");
+    const runner = new FakeRunner();
+    runner.results = [{ exitCode: 1, stdout: "", stderr: "" }];
+
+    const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
+
+    expect(outcome.method).not.toBe("symlink");
+    expect(await readFile(join(systemBinDirectory, "shis"), "utf8")).toBe("#!/bin/sh\necho not shibumi\n");
+  });
+
+  test("re-linking a second time safely replaces its own prior symlink", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const systemBinDirectory = join(await temporaryHome(), "usr-local-bin-idempotent");
+    await mkdir(systemBinDirectory, { recursive: true });
+    const runner = new FakeRunner();
+
+    const first = await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
+    const second = await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
+
+    expect(first.method).toBe("symlink");
+    expect(second.method).toBe("symlink");
+  });
+
+  test("rolls back the first passwordless-sudo link when the second one fails", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const systemBinDirectory = join(await temporaryHome(), "not-writable-partial-sudo");
+    const runner = new FakeRunner();
+    runner.results = [
+      { exitCode: 0, stdout: "", stderr: "" }, // sudo -n ln for shis succeeds
+      { exitCode: 1, stdout: "", stderr: "" }, // sudo -n ln for shibumi-server fails
+      { exitCode: 0, stdout: "", stderr: "" }, // rollback: sudo -n rm -f for shis
+    ];
+
+    const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
+
+    expect(outcome.method).not.toBe("symlink");
+    expect(runner.calls).toEqual([
+      ["sudo", "-n", "ln", "-sf", result.paths.shortLauncher, join(systemBinDirectory, "shis")],
+      ["sudo", "-n", "ln", "-sf", result.paths.launcher, join(systemBinDirectory, "shibumi-server")],
+      ["sudo", "-n", "rm", "-f", join(systemBinDirectory, "shis")],
+    ]);
+  });
+
+  test("skips the ~/.profile fallback entirely when profileFallback is disabled", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const systemBinDirectory = join(await temporaryHome(), "not-writable-quiet");
+    const runner = new FakeRunner();
+    runner.results = [{ exitCode: 1, stdout: "", stderr: "" }];
+
+    const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory, profileFallback: false }, runner);
+
+    expect(outcome.method).toBe("skipped");
+    expect(await Bun.file(join(home, ".profile")).exists()).toBe(false);
+  });
+
+  test("trySymlinkPath never writes to ~/.profile even when the symlink attempt fails", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const systemBinDirectory = join(await temporaryHome(), "not-writable-detection-only");
+    const runner = new FakeRunner();
+    runner.results = [{ exitCode: 1, stdout: "", stderr: "" }];
+
+    const outcome = await trySymlinkPath(result.paths, { systemBinDirectory }, runner);
+
+    expect(outcome.symlinked).toBe(false);
+    expect(await Bun.file(join(home, ".profile")).exists()).toBe(false);
   });
 
   test("prompts for sudo authorization only when the caller opts in", async () => {

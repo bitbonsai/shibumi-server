@@ -1,9 +1,61 @@
-import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
-import { checkAppHealth, confirmCheckoutReplacement, defaultCheckout, findCommand, formatReadySummary, mergeSetupAnswers, nextAvailablePort, registrationOutcome, resolveComposeCommand, setupRequirementIssues } from "../src/setup";
+import { addApp, initializeInstallation, installationPaths, type CheckoutManager, type ServiceManager } from "../src/install";
+import { checkAppHealth, confirmCheckoutReplacement, defaultCheckout, findCommand, formatReadySummary, mergeSetupAnswers, nextAvailablePort, registrationOutcome, resolveComposeCommand, runSetRepository, setupRequirementIssues, withSpinnerPause, type InteractiveUi } from "../src/setup";
+
+const roots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+async function temporaryHome(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "shibumi-setup-"));
+  roots.push(root);
+  return root;
+}
+
+class NoopServices implements ServiceManager {
+  restarts = 0;
+  async reload(): Promise<void> {}
+  async reloadUnits(): Promise<void> {}
+  async enableAndRestart(): Promise<void> { this.restarts += 1; }
+  async disableAndStop(): Promise<void> {}
+}
+
+function fakeUi(overrides: Partial<{ confirmResult: boolean }> = {}): InteractiveUi & {
+  calls: { intro: number; outro: string[]; cancel: string[]; confirm: number; logInfo: string[]; spinnerStart: string[]; spinnerStop: string[]; spinnerError: string[] };
+} {
+  const calls = { intro: 0, outro: [] as string[], cancel: [] as string[], confirm: 0, logInfo: [] as string[], spinnerStart: [] as string[], spinnerStop: [] as string[], spinnerError: [] as string[] };
+  return {
+    calls,
+    intro: () => { calls.intro += 1; },
+    outro: (message?: string) => { calls.outro.push(message ?? ""); },
+    cancel: (message?: string) => { calls.cancel.push(message ?? ""); },
+    confirm: (async () => { calls.confirm += 1; return overrides.confirmResult ?? true; }) as InteractiveUi["confirm"],
+    spinner: (() => ({
+      start: (msg?: string) => calls.spinnerStart.push(msg ?? ""),
+      stop: (msg?: string) => calls.spinnerStop.push(msg ?? ""),
+      cancel: () => {},
+      error: (msg?: string) => calls.spinnerError.push(msg ?? ""),
+      message: () => {},
+      clear: () => {},
+      isCancelled: false,
+    })) as InteractiveUi["spinner"],
+    log: {
+      message: () => {},
+      info: (msg: string) => { calls.logInfo.push(msg); },
+      success: () => {},
+      step: () => {},
+      warn: () => {},
+      warning: () => {},
+      error: () => {},
+    },
+  };
+}
 
 class RequirementRunner implements CommandRunner {
   constructor(
@@ -125,6 +177,61 @@ describe("interactive setup", () => {
     }, true)).toBe(true);
   });
 
+  test("asks for confirmation without --yes, and honors the answer", async () => {
+    const mismatch = { checkout: "/home/user/shibumi/example-com", backup: "/home/user/shibumi/example-com.bak", repository: "owner/repo" };
+    const warnings: string[] = [];
+    const logUi = { warn: (message: string) => { warnings.push(message); } };
+    let promptedWith: unknown;
+
+    const accepted = await confirmCheckoutReplacement(mismatch, false, {
+      log: logUi,
+      confirm: async (opts) => { promptedWith = opts; return true; },
+    });
+    expect(accepted).toBe(true);
+
+    const declined = await confirmCheckoutReplacement(mismatch, false, {
+      log: logUi,
+      confirm: async () => false,
+    });
+    expect(declined).toBe(false);
+
+    expect(warnings).toHaveLength(2);
+    expect((promptedWith as { message: string }).message).toBe("Move it to example-com.bak and clone owner/repo?");
+  });
+
+  test("withSpinnerPause pauses for the confirm and resumes only when accepted", async () => {
+    const events: string[] = [];
+    const progress = {
+      start: (msg?: string) => events.push(`start:${msg}`),
+      stop: (msg?: string) => events.push(`stop:${msg}`),
+      error: (msg?: string) => events.push(`error:${msg}`),
+    };
+    const mismatch = { checkout: "/srv/shibumi/example-com", backup: "/srv/shibumi/example-com.bak", repository: "owner/repo" };
+
+    const pause = withSpinnerPause(progress, () => "Adding example.com", async () => true);
+    pause.start();
+    expect(pause.active()).toBe(true);
+    expect(await pause.confirm(mismatch)).toBe(true);
+    expect(pause.active()).toBe(true);
+    expect(events).toEqual(["start:Adding example.com", "stop:Checkout example-com needs attention", "start:Adding example.com"]);
+  });
+
+  test("withSpinnerPause leaves the spinner stopped when the replacement is declined", async () => {
+    const events: string[] = [];
+    const progress = {
+      start: (msg?: string) => events.push(`start:${msg}`),
+      stop: (msg?: string) => events.push(`stop:${msg}`),
+      error: (msg?: string) => events.push(`error:${msg}`),
+    };
+    const mismatch = { checkout: "/srv/shibumi/example-com", backup: "/srv/shibumi/example-com.bak", repository: "owner/repo" };
+
+    const pause = withSpinnerPause(progress, () => "Adding example.com", async () => false);
+    pause.start();
+    expect(await pause.confirm(mismatch)).toBe(false);
+    expect(pause.active()).toBe(false);
+    expect(events).toEqual(["start:Adding example.com", "stop:Checkout example-com needs attention"]);
+  });
+
   test("assigns the first unassigned and locally available port", async () => {
     const checked: number[] = [];
     const available = async (port: number) => {
@@ -133,5 +240,106 @@ describe("interactive setup", () => {
     };
     expect(await nextAvailablePort(new Set([9_001, 9_002]), available)).toBe(9_004);
     expect(checked).toEqual([9_003, 9_004]);
+  });
+});
+
+describe("runSetRepository", () => {
+  const noopCheckouts: CheckoutManager = { async prepare() { return "compose.yaml"; } };
+
+  test("throws for an unknown app before ever prompting", async () => {
+    const home = await temporaryHome();
+    await initializeInstallation({ home, packageRoot: resolve(import.meta.dir, ".."), bunExecutable: process.execPath }, new NoopServices());
+    const ui = fakeUi();
+
+    await expect(runSetRepository(home, "missing", "owner/new-repo", undefined, false, new NoopServices(), noopCheckouts, ui))
+      .rejects.toThrow("unknown app");
+    expect(ui.calls.confirm).toBe(0);
+    expect(ui.calls.logInfo).toHaveLength(0);
+  });
+
+  test("refuses when .bak already exists, without printing the plan or prompting first", async () => {
+    const home = await temporaryHome();
+    await initializeInstallation({ home, packageRoot: resolve(import.meta.dir, ".."), bunExecutable: process.execPath }, new NoopServices());
+    const checkoutRoot = await temporaryHome();
+    const checkout = join(checkoutRoot, "example-com");
+    await mkdir(checkout, { recursive: true });
+    await mkdir(`${checkout}.bak`, { recursive: true });
+    await addApp({ home, domain: "example.com", repository: "owner/repository", checkout, hostPort: 9_100 }, new NoopServices(), noopCheckouts);
+    const ui = fakeUi();
+
+    await expect(runSetRepository(home, "example-com", "owner/new-repo", undefined, false, new NoopServices(), noopCheckouts, ui))
+      .rejects.toThrow("already exists");
+    expect(ui.calls.confirm).toBe(0);
+    expect(ui.calls.logInfo).toHaveLength(0);
+  });
+
+  test("cancels without repointing when the prompt is declined", async () => {
+    const home = await temporaryHome();
+    await initializeInstallation({ home, packageRoot: resolve(import.meta.dir, ".."), bunExecutable: process.execPath }, new NoopServices());
+    const checkoutRoot = await temporaryHome();
+    const checkout = join(checkoutRoot, "example-com");
+    await mkdir(checkout, { recursive: true });
+    await addApp({ home, domain: "example.com", repository: "owner/repository", checkout, hostPort: 9_100 }, new NoopServices(), noopCheckouts);
+    const services = new NoopServices();
+    const ui = fakeUi({ confirmResult: false });
+
+    await runSetRepository(home, "example-com", "owner/new-repo", undefined, false, services, noopCheckouts, ui);
+
+    expect(ui.calls.cancel).toEqual(["set-repository cancelled."]);
+    expect(ui.calls.outro).toHaveLength(0);
+    expect(services.restarts).toBe(0);
+    const config = JSON.parse(await readFile(installationPaths(home).config, "utf8"));
+    expect(config.apps["example-com"].repository).toBe("owner/repository");
+  });
+
+  test("repoints the app and reports success once the prompt is accepted", async () => {
+    const home = await temporaryHome();
+    await initializeInstallation({ home, packageRoot: resolve(import.meta.dir, ".."), bunExecutable: process.execPath }, new NoopServices());
+    const checkoutRoot = await temporaryHome();
+    const checkout = join(checkoutRoot, "example-com");
+    await mkdir(checkout, { recursive: true });
+    await addApp({ home, domain: "example.com", repository: "owner/repository", checkout, hostPort: 9_100 }, new NoopServices(), noopCheckouts);
+    const services = new NoopServices();
+    const ui = fakeUi({ confirmResult: true });
+
+    await runSetRepository(home, "example-com", "owner/new-repo", undefined, false, services, noopCheckouts, ui);
+
+    expect(ui.calls.outro).toEqual(["Repository updated. Next deploy ships from github:owner/new-repo."]);
+    expect(ui.calls.spinnerStart).toEqual(["Cloning github:owner/new-repo"]);
+    expect(ui.calls.spinnerStop).toEqual(["Repository updated for example.com"]);
+    expect(services.restarts).toBe(1);
+    const config = JSON.parse(await readFile(installationPaths(home).config, "utf8"));
+    expect(config.apps["example-com"].repository).toBe("owner/new-repo");
+  });
+
+  test("skips the prompt with --yes", async () => {
+    const home = await temporaryHome();
+    await initializeInstallation({ home, packageRoot: resolve(import.meta.dir, ".."), bunExecutable: process.execPath }, new NoopServices());
+    const checkoutRoot = await temporaryHome();
+    const checkout = join(checkoutRoot, "example-com");
+    await mkdir(checkout, { recursive: true });
+    await addApp({ home, domain: "example.com", repository: "owner/repository", checkout, hostPort: 9_100 }, new NoopServices(), noopCheckouts);
+    const ui = fakeUi();
+
+    await runSetRepository(home, "example-com", "owner/new-repo", undefined, true, new NoopServices(), noopCheckouts, ui);
+
+    expect(ui.calls.confirm).toBe(0);
+    expect(ui.calls.outro).toEqual(["Repository updated. Next deploy ships from github:owner/new-repo."]);
+  });
+
+  test("reports spinner failure and rethrows when the underlying repoint fails", async () => {
+    const home = await temporaryHome();
+    await initializeInstallation({ home, packageRoot: resolve(import.meta.dir, ".."), bunExecutable: process.execPath }, new NoopServices());
+    const checkoutRoot = await temporaryHome();
+    const checkout = join(checkoutRoot, "example-com");
+    await mkdir(checkout, { recursive: true });
+    await addApp({ home, domain: "example.com", repository: "owner/repository", checkout, hostPort: 9_100 }, new NoopServices(), noopCheckouts);
+    const failingCheckouts: CheckoutManager = { async prepare() { throw new Error("cannot clone owner/new-repo"); } };
+    const ui = fakeUi({ confirmResult: true });
+
+    await expect(runSetRepository(home, "example-com", "owner/new-repo", undefined, false, new NoopServices(), failingCheckouts, ui))
+      .rejects.toThrow("cannot clone");
+    expect(ui.calls.spinnerError).toEqual(["Could not repoint example.com"]);
+    expect(ui.calls.outro).toHaveLength(0);
   });
 });

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, chmod, cp, lstat, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, cp, lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseConfig, type AppConfig, type ServerConfig } from "./config";
 import { BunCommandRunner, type CommandRunner } from "./deploy";
@@ -240,7 +240,7 @@ const DEFAULT_SYSTEM_BIN_DIRECTORY = "/usr/local/bin";
 const PROFILE_PATH_MARK = "# shibumi-server: keep shis on PATH for non-interactive SSH sessions";
 
 export interface PathIntegrationResult {
-  method: "symlink" | "profile-appended" | "profile-existing";
+  method: "symlink" | "profile-appended" | "profile-existing" | "skipped";
   detail: string;
 }
 
@@ -251,6 +251,25 @@ async function canWrite(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// True only for a symlink shibumi-server itself created (its target lives
+// inside our own ~/.local/bin). Anything else at that path — a real binary,
+// or someone else's symlink — is left alone rather than clobbered.
+async function isManagedLink(link: string, binDirectory: string): Promise<boolean> {
+  try {
+    const stats = await lstat(link);
+    if (!stats.isSymbolicLink()) return false;
+    const target = await readlink(link);
+    const resolvedTarget = isAbsolute(target) ? target : resolve(dirname(link), target);
+    return resolvedTarget === binDirectory || resolvedTarget.startsWith(`${binDirectory}/`);
+  } catch {
+    return false;
+  }
+}
+
+async function removeRollback(created: string[], removeOne: (link: string) => Promise<void>): Promise<void> {
+  for (const link of created) await removeOne(link).catch(() => {});
 }
 
 async function symlinkLaunchers(
@@ -264,18 +283,42 @@ async function symlinkLaunchers(
     [paths.launcher, join(systemBinDirectory, "shibumi-server")],
   ];
   if (await canWrite(systemBinDirectory)) {
-    for (const [target, link] of links) {
-      await rm(link, { force: true }).catch(() => {});
-      await symlink(target, link);
+    const created: string[] = [];
+    try {
+      for (const [target, link] of links) {
+        if (await exists(link) && !(await isManagedLink(link, paths.binDirectory))) {
+          throw new Error(`refusing to replace ${link}: it is not a shibumi-server symlink`);
+        }
+        await rm(link, { force: true }).catch(() => {});
+        await symlink(target, link);
+        created.push(link);
+      }
+      return true;
+    } catch {
+      // Roll back a half-linked state rather than reporting failure while
+      // leaving one of the two commands actually repointed.
+      await removeRollback(created, (link) => rm(link, { force: true }));
+      return false;
     }
-    return true;
   }
   if (!tryPasswordlessSudo) return false;
+  const created: string[] = [];
   for (const [target, link] of links) {
     const result = await runner.run("sudo", ["-n", "ln", "-sf", target, link], { capture: true, timeoutMs: 10_000 });
-    if (result.exitCode !== 0) return false;
+    if (result.exitCode !== 0) {
+      await removeRollback(created, async (createdLink) => {
+        await runner.run("sudo", ["-n", "rm", "-f", createdLink], { capture: true, timeoutMs: 10_000 });
+      });
+      return false;
+    }
+    created.push(link);
   }
   return true;
+}
+
+function profileDetail(outcome: "appended" | "existing", paths: InstallationPaths, systemBinDirectory: string): string {
+  const lead = outcome === "existing" ? `${paths.binDirectory} is already on PATH via ~/.profile` : `${paths.binDirectory} added to ~/.profile`;
+  return `${lead} — only takes effect for login shells, so some "ssh host shis ..." sessions still won't see it. For a fix that always works, run: sudo ln -sf ${paths.shortLauncher} ${systemBinDirectory}/shis`;
 }
 
 async function appendProfilePath(home: string, binDirectory: string): Promise<"appended" | "existing"> {
@@ -286,24 +329,22 @@ async function appendProfilePath(home: string, binDirectory: string): Promise<"a
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  if (content.includes(binDirectory)) return "existing";
+  const exportLine = `export PATH="${binDirectory}:$PATH"`;
+  if (content.includes(PROFILE_PATH_MARK) || content.includes(exportLine)) return "existing";
   const prefix = content.length === 0 || content.endsWith("\n") ? content : `${content}\n`;
   const separator = prefix.length === 0 ? "" : "\n";
-  await writeFile(profilePath, `${prefix}${separator}${PROFILE_PATH_MARK}\nexport PATH="${binDirectory}:$PATH"\n`, { mode: 0o644 });
+  await atomicWrite(profilePath, `${prefix}${separator}${PROFILE_PATH_MARK}\n${exportLine}\n`, 0o644);
   return "appended";
 }
 
-// Non-interactive `ssh host shis ...` sessions often skip ~/.local/bin: many
-// shells only read ~/.profile for login shells, and some skip it entirely for
-// a single remote command. A real symlink in /usr/local/bin is the only fix
-// that works everywhere, so it is tried first; ~/.profile is a best-effort
-// fallback that only helps when the remote shell treats the session as login.
-export async function ensurePathIntegration(
-  home: string,
+// Tries the part of PATH integration that never prompts or mutates ~/.profile:
+// a direct write, or a passwordless (`sudo -n`) symlink, into systemBinDirectory.
+// Callers decide separately whether to ask for a real sudo password afterward.
+export async function trySymlinkPath(
   paths: InstallationPaths,
   options: { allowSudoPrompt?: boolean; systemBinDirectory?: string } = {},
   runner: CommandRunner = new BunCommandRunner(),
-): Promise<PathIntegrationResult> {
+): Promise<{ symlinked: boolean; systemBinDirectory: string }> {
   const systemBinDirectory = options.systemBinDirectory ?? DEFAULT_SYSTEM_BIN_DIRECTORY;
   let symlinked = false;
   try {
@@ -315,17 +356,32 @@ export async function ensurePathIntegration(
   } catch {
     symlinked = false;
   }
+  return { symlinked, systemBinDirectory };
+}
+
+// Non-interactive `ssh host shis ...` sessions often skip ~/.local/bin: many
+// shells only read ~/.profile for login shells, and some skip it entirely for
+// a single remote command. A real symlink in /usr/local/bin is the only fix
+// that works everywhere, so it is tried first; ~/.profile is a best-effort
+// fallback that only helps when the remote shell treats the session as login.
+export async function ensurePathIntegration(
+  home: string,
+  paths: InstallationPaths,
+  options: { allowSudoPrompt?: boolean; systemBinDirectory?: string; profileFallback?: boolean } = {},
+  runner: CommandRunner = new BunCommandRunner(),
+): Promise<PathIntegrationResult> {
+  const { symlinked, systemBinDirectory } = await trySymlinkPath(paths, options, runner);
   if (symlinked) {
     return { method: "symlink", detail: `${systemBinDirectory}/shis -> ${paths.shortLauncher}` };
   }
-
+  if (options.profileFallback === false) {
+    return {
+      method: "skipped",
+      detail: `${paths.binDirectory} may not be reachable from non-interactive SSH sessions. Run shis init to retry, or symlink manually: sudo ln -sf ${paths.shortLauncher} ${systemBinDirectory}/shis`,
+    };
+  }
   const outcome = await appendProfilePath(home, paths.binDirectory);
-  return {
-    method: outcome === "existing" ? "profile-existing" : "profile-appended",
-    detail: outcome === "existing"
-      ? `${paths.binDirectory} is already on PATH via ~/.profile`
-      : `${paths.binDirectory} added to ~/.profile — only takes effect for login shells, so some "ssh host shis ..." sessions still won't see it. For a fix that always works, run: sudo ln -sf ${paths.shortLauncher} ${systemBinDirectory}/shis`,
-  };
+  return { method: outcome === "existing" ? "profile-existing" : "profile-appended", detail: profileDetail(outcome, paths, systemBinDirectory) };
 }
 
 function systemdPath(value: string): string {
@@ -735,19 +791,31 @@ export async function setAppRepository(
   parseConfig({ ...root, apps: { ...apps, [appId]: { ...existingApp, repository, ref: nextRef } } });
 
   await rename(app.checkout, backup);
-  let composeFile: string;
+  // Re-detects the Compose file for the new repository rather than reusing the
+  // old app.composeFile: set-repository exists precisely to swap in an
+  // unrelated repo, so assuming its layout matches the old one is unsafe.
+  let candidate: { apps: Record<string, unknown> } & Record<string, unknown>;
   try {
-    composeFile = await checkouts.prepare({ repository, ref: nextRef, checkout: app.checkout });
+    const composeFile = await checkouts.prepare({ repository, ref: nextRef, checkout: app.checkout });
+    candidate = {
+      ...root,
+      apps: { ...apps, [appId]: { ...existingApp, repository, ref: nextRef, composeFile } },
+    };
+    parseConfig(candidate);
   } catch (error) {
-    await rename(backup, app.checkout).catch(() => {});
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      // The failure may have happened after a real clone already populated
+      // app.checkout (e.g. during Compose-file detection); a plain rename
+      // back onto that non-empty directory would fail, so clear it first.
+      await rm(app.checkout, { recursive: true, force: true });
+      await rename(backup, app.checkout);
+    } catch (revertError) {
+      throw new Error(`${message}\n\nThe original checkout could not be restored from ${backup}: ${revertError instanceof Error ? revertError.message : String(revertError)}.\n\nNext: manually move ${backup} back to ${app.checkout}.`);
+    }
     throw error;
   }
 
-  const candidate = {
-    ...root,
-    apps: { ...apps, [appId]: { ...existingApp, repository, ref: nextRef, composeFile } },
-  };
-  parseConfig(candidate);
   await atomicWrite(paths.config, `${JSON.stringify(candidate, null, 2)}\n`, 0o600);
   await services.enableAndRestart();
   return { appId, domain: app.domain ?? appId, checkout: app.checkout, backup, repository, ref: nextRef };

@@ -55,6 +55,8 @@ shis set-repository example.com github:owner/new-repository
 
 Moves the app's existing checkout to `<checkout>.bak`, clones the new repository in its place, and updates the registration, all without touching Caddy or re-registering the app. Confirms first; `--yes` skips the prompt. Refuses only when `<checkout>.bak` already exists, since that's the one case Shibumi won't overwrite silently.
 
+The Compose file path is re-detected in the new repository rather than carried over from the old one, the same way `shis add` detects it for a fresh checkout. This is deliberate: `set-repository` exists to swap in an unrelated repository, so assuming its layout matches the old one isn't safe. If detection fails partway (for example, the new repository has no Compose file where expected), Shibumi restores the original checkout from `<checkout>.bak` and leaves the registration untouched.
+
 `shis add` offers the same move when it finds an existing checkout whose Git origin doesn't match the repository you're adding.
 
 ## Uninstall

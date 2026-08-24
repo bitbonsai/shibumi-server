@@ -132,7 +132,34 @@ describe("prebuilt images", () => {
     };
 
     await expect(inspectPrebuiltImageMetadata(runner, "myapp", "a".repeat(40), "owner/repo"))
-      .rejects.toThrow("shis set-repository myapp github:other/repository");
+      .rejects.toThrow("shis set-repository myapp github:other/repository --yes");
+  });
+
+  test("strips a trailing .git from the mismatched source before suggesting a repository", async () => {
+    const runner = new FakeRunner();
+    runner.run = async (command, args, options) => {
+      runner.calls.push({ command, args, options });
+      if (args[0] === "image" && args[1] === "inspect") return {
+        exitCode: 0,
+        stdout: JSON.stringify([{
+          Os: "linux",
+          Architecture: process.arch === "arm64" ? "arm64" : "amd64",
+          RepoTags: [args[2]],
+          Labels: {
+            "dev.shibumistack.app-id": "myapp",
+            "org.opencontainers.image.revision": "a".repeat(40),
+            "org.opencontainers.image.source": "https://github.com/other/repository.git",
+            "dev.shibumistack.source-tree": "b".repeat(40),
+          },
+        }]),
+        stderr: "",
+      };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    const failure = await inspectPrebuiltImageMetadata(runner, "myapp", "a".repeat(40), "owner/repo").catch((error) => error);
+    expect((failure as Error).message).toContain("github:other/repository --yes");
+    expect((failure as Error).message).not.toContain("repository.git");
   });
 
   test("maps supported server architectures to Linux image platforms", () => {

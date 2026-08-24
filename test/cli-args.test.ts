@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatHelp, parseCliArgs } from "../src/cli-args";
+import { formatHelp, parseCliArgs, shouldOfferCheckoutReplacement } from "../src/cli-args";
 
 describe("CLI arguments", () => {
   test("formats branded help with optional terminal color", () => {
@@ -203,5 +203,17 @@ describe("CLI arguments", () => {
       "--port", "9100",
       "--",
     ])).toThrow("test command");
+  });
+
+  test("only offers the checkout-replacement confirm with --yes or a real TTY", () => {
+    // A scripted `ssh host shis add ...` has no TTY and no --yes: offering an
+    // interactive confirm there would hang forever waiting on an answer that
+    // can never arrive, so it must resolve to false (fall back to the plain
+    // mismatch error) instead.
+    expect(shouldOfferCheckoutReplacement(false, false)).toBe(false);
+    expect(shouldOfferCheckoutReplacement(false, undefined)).toBe(false);
+    expect(shouldOfferCheckoutReplacement(false, true)).toBe(true);
+    expect(shouldOfferCheckoutReplacement(true, false)).toBe(true);
+    expect(shouldOfferCheckoutReplacement(true, undefined)).toBe(true);
   });
 });

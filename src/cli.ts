@@ -5,7 +5,7 @@ import { delimiter, dirname } from "node:path";
 import { resolve } from "node:path";
 import packageJson from "../package.json";
 import { createClientConfig, readWebhookSecret } from "./client-config";
-import { formatHelp, parseCliArgs } from "./cli-args";
+import { formatHelp, parseCliArgs, shouldOfferCheckoutReplacement } from "./cli-args";
 import { loadConfig, validateSecrets } from "./config";
 import { addApp, ensurePathIntegration, GitCheckoutManager, enablePrebuiltApp, initializeInstallation, installationPaths, setDeploymentMode, uninstallInstallation } from "./install";
 import { WebhookService } from "./server";
@@ -132,9 +132,12 @@ try {
       packageRoot: resolve(import.meta.dir, ".."),
       bunExecutable: process.execPath,
     });
-    // Best effort, no password prompt: automation should never hang waiting on sudo.
-    const pathIntegration = await ensurePathIntegration(homedir(), result.paths);
-    if (process.env.SHIBUMI_QUIET_INIT !== "1") await present([
+    // Best effort, no password prompt: automation should never hang waiting on
+    // sudo. `shis update` re-execs init with SHIBUMI_QUIET_INIT=1; that quiet
+    // path must never mutate ~/.profile, so it skips the fallback entirely.
+    const quietInit = process.env.SHIBUMI_QUIET_INIT === "1";
+    const pathIntegration = await ensurePathIntegration(homedir(), result.paths, { profileFallback: !quietInit });
+    if (!quietInit) await present([
       { tone: "success", message: `Installed shibumi-server ${result.version}` },
       { tone: "info", message: `Release ${result.paths.currentRelease}` },
       { tone: "info", message: `Launcher ${result.paths.shortLauncher}` },
@@ -265,7 +268,10 @@ try {
     if (options.repository && options.checkout && options.hostPort !== undefined) {
       const { resolveComposeCommand, confirmCheckoutReplacement } = await import("./setup");
       options.composeCommand = await resolveComposeCommand(options.composeCommand);
-      const checkouts = new GitCheckoutManager(new BunCommandRunner(), (mismatch) => confirmCheckoutReplacement(mismatch, yes));
+      const checkouts = new GitCheckoutManager(
+        new BunCommandRunner(),
+        shouldOfferCheckoutReplacement(yes, process.stdin.isTTY) ? (mismatch) => confirmCheckoutReplacement(mismatch, yes) : undefined,
+      );
       const result = await addApp({
         home: homedir(),
         ...options,
