@@ -127,7 +127,7 @@ main a:not(.btn):not(.button):focus-visible {
     width: 100vw;
     height: 100%;
     transform: translateX(-50%);
-    background: light-dark(rgb(245 240 228 / 78%), rgb(27 19 15 / 72%));
+    background: light-dark(rgb(245 240 228 / 45%), rgb(27 19 15 / 72%));
     backdrop-filter: blur(1.125rem);
     -webkit-backdrop-filter: blur(1.125rem);
 }
