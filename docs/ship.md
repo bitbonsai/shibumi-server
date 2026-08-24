@@ -34,6 +34,8 @@ SSH targets stay in `~/.config/shibumi/config.json`, or `$XDG_CONFIG_HOME/shibum
 
 Choose **Run bun ship** or **Deploy every GitHub push**.
 
+In direct Ship mode, setup ends with a **Ship now?** confirm. Enter runs the first deploy in the same run; declining prints the command for later.
+
 - **Run bun ship** builds locally, uploads the image, and starts deployment over SSH. If GitHub CLI is signed in, setup disables the matching webhook. Direct shipping still works when `gh` is not signed in.
 - **Deploy every GitHub push** switches the server to build mode, then creates or repairs the webhook and tests delivery. Its secret stays in memory and on the server.
 
