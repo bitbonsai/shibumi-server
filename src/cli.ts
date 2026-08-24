@@ -191,6 +191,27 @@ try {
       command.appId,
       command.serverHostname ? async () => command.serverHostname as string : undefined,
     ), null, 2));
+  } else if (command.name === "env") {
+    const { appEnvPath, mergeAppEnv, readAppEnv, writeAppEnv } = await import("./app-env");
+    const path = appEnvPath(installationPaths(homedir()).configDirectory, command.appId);
+    if (command.action === "list") {
+      const keys = Object.keys(readAppEnv(path)).sort();
+      if (command.json) console.log(JSON.stringify(keys));
+      else await present(keys.map((key) => ({ tone: "info" as const, message: key })), keys.length ? `${keys.length} variable(s)` : `No variables set for ${command.appId}`);
+    } else if (command.action === "set") {
+      const { parseEnv } = await import("./app-env");
+      const stdin = await Bun.stdin.text();
+      const incoming = parseEnv(stdin);
+      if (Object.keys(incoming).length === 0) throw new Error("No KEY=VALUE lines on stdin.\n\nPipe values in, e.g. printf 'APP_ORIGIN=https://app.example.com\\n' | shis env set <app-id>.");
+      writeAppEnv(path, mergeAppEnv(readAppEnv(path), incoming));
+      console.log(`Set ${Object.keys(incoming).sort().join(", ")}. Redeploy to apply (bun ship, or shis redeploy).`);
+    } else {
+      const current = readAppEnv(path);
+      const removed = command.keys.filter((key) => key in current);
+      for (const key of command.keys) delete current[key];
+      writeAppEnv(path, current);
+      console.log(removed.length ? `Removed ${removed.sort().join(", ")}. Redeploy to apply.` : "No matching variables.");
+    }
   } else if (command.name === "webhook-secret") {
     const paths = installationPaths(homedir());
     console.log(JSON.stringify({ secret: await readWebhookSecret(paths.config, paths.secrets, command.appId) }));

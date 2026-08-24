@@ -15,6 +15,7 @@ export type CliCommand =
   | { name: "logs"; appId: string }
   | { name: "rollback"; appId: string; yes: boolean }
   | { name: "redeploy"; appId: string; commit: string }
+  | { name: "env"; action: "set" | "list" | "rm"; appId: string; keys: string[]; json: boolean }
   | { name: "init" }
   | { name: "uninstall"; purge: boolean; yes: boolean }
   | {
@@ -83,6 +84,9 @@ ${heading("OPERATIONS")}
   ${command("shis logs <app-id>")}                  Show latest deployment log
   ${command("shis rollback <app-id>")} [--yes]
   ${command("shis redeploy <app-id> <full-sha>")}
+  ${command("shis env set <app-id>")}                 Set vars from KEY=VALUE lines on stdin
+  ${command("shis env list <app-id>")} [--json]       List variable names (never values)
+  ${command("shis env rm <app-id> <KEY...>")}         Remove variables
   ${command("shis image-load <app-id> <full-sha> <bytes>")} Load prebuilt image from stdin
   ${command("shis deployment-mode <app-id> <build|prebuilt>")}
   ${command("shis enable-prebuilt <app-id>")}       Compatibility alias
@@ -288,6 +292,28 @@ export function parseCliArgs(argv: string[]): CliCommand {
       healthPath: values.get("--health-path"),
       deploymentMode,
     };
+  }
+
+  if (name === "env") {
+    const [action, appId, ...rest] = args;
+    if (action !== "set" && action !== "list" && action !== "rm") {
+      fail("env requires set, list, or rm");
+    }
+    if (!appId || appId.startsWith("--")) fail("env requires an app id");
+    if (action === "list") {
+      const jsonCount = rest.filter((arg) => arg === "--json").length;
+      if (rest.some((arg) => arg !== "--json") || jsonCount > 1) fail("env list accepts only --json");
+      return { name, action, appId, keys: [], json: jsonCount === 1 };
+    }
+    if (action === "set") {
+      // Values arrive on stdin (KEY=VALUE lines), never argv, so secrets stay
+      // out of the process list.
+      if (rest.length > 0) fail("env set reads KEY=VALUE lines from stdin; pass no extra arguments");
+      return { name, action, appId, keys: [], json: false };
+    }
+    // rm
+    if (rest.length === 0 || rest.some((arg) => arg.startsWith("--"))) fail("env rm requires one or more KEY names");
+    return { name, action, appId, keys: rest, json: false };
   }
 
   fail(name ? `unknown command: ${name}` : "missing command");

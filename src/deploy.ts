@@ -1,5 +1,7 @@
 import { readFile, statfs } from "node:fs/promises";
-import { freemem } from "node:os";
+import { freemem, homedir } from "node:os";
+import { join } from "node:path";
+import { appEnvPath, readAppEnv } from "./app-env";
 import { APP_RETRY_BUDGET_MS } from "./caddy";
 import { composePath, type AppConfig } from "./config";
 import { inspectPrebuiltImageMetadata, runtimeImage, uploadedImage } from "./prebuilt";
@@ -279,7 +281,7 @@ export async function scheduleRollbackImageExpiry(
   }
 }
 
-interface DeployMetadata {
+export interface DeployMetadata {
   commit: string;
   deployedAt: string;
 }
@@ -453,15 +455,31 @@ async function restoreRelease(
   }
 }
 
-function composeOverride(service: string, image?: string, metadata?: DeployMetadata): string {
-  const properties = [
-    image && `    image: ${JSON.stringify(image)}`,
-    metadata && `    environment:\n      SHIBUMI_COMMIT: ${JSON.stringify(metadata.commit)}\n      SHIBUMI_DEPLOYED_AT: ${JSON.stringify(metadata.deployedAt)}`,
-  ].filter(Boolean).join("\n");
+export function composeOverride(service: string, image?: string, metadata?: DeployMetadata, appEnv: Record<string, string> = {}): string {
+  const envEntries: Array<[string, string]> = [];
+  if (metadata) {
+    envEntries.push(["SHIBUMI_COMMIT", metadata.commit], ["SHIBUMI_DEPLOYED_AT", metadata.deployedAt]);
+  }
+  // App-managed env (shis env set) overrides nothing Shibumi owns: the two
+  // SHIBUMI_* keys are reserved and win over any stored value of the same name.
+  for (const [key, value] of Object.entries(appEnv)) {
+    if (key !== "SHIBUMI_COMMIT" && key !== "SHIBUMI_DEPLOYED_AT") envEntries.push([key, value]);
+  }
+  const environment =
+    envEntries.length > 0
+      ? `    environment:\n${envEntries.map(([key, value]) => `      ${key}: ${JSON.stringify(value)}`).join("\n")}`
+      : undefined;
+  const properties = [image && `    image: ${JSON.stringify(image)}`, environment].filter(Boolean).join("\n");
   return `services:\n  ${JSON.stringify(service)}:\n${properties}\n`;
 }
 
-function composeInvocation(appId: string, app: AppConfig, image?: string, metadata?: DeployMetadata): {
+function composeInvocation(
+  appId: string,
+  app: AppConfig,
+  image?: string,
+  metadata?: DeployMetadata,
+  appEnv: Record<string, string> = {},
+): {
   executable: string;
   compose: string[];
   options: CommandOptions;
@@ -469,11 +487,17 @@ function composeInvocation(appId: string, app: AppConfig, image?: string, metada
   const [executable, ...prefix] = app.composeCommand;
   const compose = [...prefix, "--project-name", app.composeProject, "--file", composePath(app)];
   const options: CommandOptions = { env: { SHIBUMI_PORT: String(app.hostPort) } };
-  if (image || metadata) {
+  if (image || metadata || Object.keys(appEnv).length > 0) {
     compose.push("--file", "-");
-    options.input = composeOverride(app.service, image, metadata);
+    options.input = composeOverride(app.service, image, metadata, appEnv);
   }
   return { executable, compose, options };
+}
+
+// Reads the per-app env store from the server config directory. Runs on the
+// server as the app user, so homedir() is correct.
+function loadAppEnv(appId: string): Record<string, string> {
+  return readAppEnv(appEnvPath(join(homedir(), ".config", "shibumi-server"), appId));
 }
 
 export async function rollbackToPreviousImage(
@@ -483,7 +507,8 @@ export async function rollbackToPreviousImage(
   onTarget?: (commit: string) => void | Promise<void>,
 ): Promise<string> {
   const startedAt = Date.now();
-  let invocation = composeInvocation(appId, app, app.deploymentMode === "prebuilt" ? runtimeImage(appId) : undefined);
+  const appEnv = loadAppEnv(appId);
+  let invocation = composeInvocation(appId, app, app.deploymentMode === "prebuilt" ? runtimeImage(appId) : undefined, undefined, appEnv);
   let { executable: composeExecutable, compose, options } = invocation;
   await runChecked(dependencies, "config", composeExecutable, [...compose, "config", "--quiet"], options);
   const current = await runningRelease(app, composeExecutable, compose, options, dependencies);
@@ -533,6 +558,7 @@ export async function rollbackToPreviousImage(
     app,
     app.deploymentMode === "prebuilt" ? runtimeImage(appId) : undefined,
     { commit, deployedAt: new Date(startedAt).toISOString() },
+    appEnv,
   );
   ({ executable: composeExecutable, compose, options } = invocation);
   await dependencies.onStage?.("rollback");
@@ -565,6 +591,7 @@ export async function deploy(
   dependencies: DeployDependencies,
 ): Promise<void> {
   const startedAt = Date.now();
+  const appEnv = loadAppEnv(appId);
   let metadata: DeployMetadata = { commit, deployedAt: new Date(startedAt).toISOString() };
   await dependencies.onStage?.("preflight");
   await checkResources(app, dependencies);
@@ -581,7 +608,7 @@ export async function deploy(
   }
   await git(["reset", "--hard", commit], "checkout");
 
-  let invocation = composeInvocation(appId, app, undefined, metadata);
+  let invocation = composeInvocation(appId, app, undefined, metadata, appEnv);
   let sourceTree: string | undefined;
   if (app.deploymentMode === "prebuilt") {
     const tree = await git(["rev-parse", `${commit}^{tree}`], "verify", true);
@@ -595,7 +622,7 @@ export async function deploy(
       throw new DeploymentError("image", `${error instanceof Error ? error.message : String(error)}. Upload it with bun ship, then retry.`);
     }
     metadata = { ...metadata, commit: uploaded.revision };
-    invocation = composeInvocation(appId, app, uploaded.image, metadata);
+    invocation = composeInvocation(appId, app, uploaded.image, metadata, appEnv);
   }
 
   let { executable: composeExecutable, compose, options } = invocation;
@@ -625,7 +652,7 @@ export async function deploy(
     const runtime = runtimeImage(appId);
     metadata = { ...metadata, commit: uploaded.revision };
     await runChecked(dependencies, "image", "podman", ["image", "tag", uploaded.image, runtime], { capture: true });
-    invocation = composeInvocation(appId, app, runtime, metadata);
+    invocation = composeInvocation(appId, app, runtime, metadata, appEnv);
     ({ executable: composeExecutable, compose, options } = invocation);
   }
   const replacementStartedAt = Date.now();
