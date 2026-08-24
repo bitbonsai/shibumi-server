@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { createHash } from "node:crypto";
 
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import packageJson from "../package.json";
@@ -92,7 +93,17 @@ export async function buildSite(log = true): Promise<void> {
   await cp("site", output, { recursive: true });
   await rm(`${output}/docs-template.html`);
 
-  const home = (await readFile(`${output}/index.html`, "utf8")).replaceAll("{{version}}", version);
+  // CSS/JS links carry a content hash so CDN caches drop stale copies.
+  const assetVersion = createHash("sha256")
+    .update(await readFile("site/shibumi.css"))
+    .update(await readFile("site/styles.css"))
+    .update(await readFile("site/docs.css"))
+    .digest("hex")
+    .slice(0, 12);
+  const versionAssets = (html: string) =>
+    html.replaceAll(/(href|src)="\/((?:shibumi|styles|docs)\.css|(?:app|docs)\.js)"/g, `$1="/$2?v=${assetVersion}"`);
+
+  const home = versionAssets((await readFile(`${output}/index.html`, "utf8")).replaceAll("{{version}}", version));
   if (home.includes("{{")) throw new Error("unresolved home template token");
   await writeFile(`${output}/index.html`, home);
   await writeFile(`${output}/index.md`, await readFile("README.md"));
@@ -111,7 +122,7 @@ export async function buildSite(log = true): Promise<void> {
       content: renderMarkdown(markdown),
       pager: pager(index),
     };
-    let html = template;
+    let html = versionAssets(template);
     for (const [name, value] of Object.entries(values)) html = html.replaceAll(`{{${name}}}`, value);
     if (/{{[a-z-]+}}/.test(html)) throw new Error(`unresolved docs template token for ${path}`);
     const directory = page.path ? `${output}/docs/${page.path}` : `${output}/docs`;
