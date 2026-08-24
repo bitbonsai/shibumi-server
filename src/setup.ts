@@ -12,7 +12,7 @@ import { DeploymentStatusStore } from "./status";
 import { checkDomainDns, detectPublicAddresses } from "./domain";
 import { APP_RETRY_BUDGET_MS, detectCaddySite, type CaddySiteOptions, type Compression, type HeaderProfile, type Indexing } from "./caddy";
 import { applyCaddyWithSudo, authorizeCaddySudo, type CaddyApplyRequest } from "./caddy-sudo";
-import { addApp, appIdForDomain, ensurePathIntegration, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, setAppRepository, SystemdUserServiceManager, trySymlinkPath, type AddAppOptions, type CheckoutManager, type CheckoutMismatch, type ConfirmCheckoutReplacement, type PathIntegrationResult, type ServiceManager } from "./install";
+import { addApp, appIdForDomain, applyProfileFallback, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, setAppRepository, SystemdUserServiceManager, trySymlinkPath, type AddAppOptions, type CheckoutManager, type CheckoutMismatch, type ConfirmCheckoutReplacement, type InstallationPaths, type PathIntegrationResult, type ServiceManager } from "./install";
 import { parseGitHubRepositoryTarget } from "./repository";
 import { brand, command, next, SHIP_INSTALL_COMMAND } from "./terminal-ui";
 
@@ -457,6 +457,33 @@ async function promptForCaddy(answers: SetupAnswers, yes = false): Promise<Caddy
   return request;
 }
 
+// Detection first, mutation second: a passwordless symlink attempt touches
+// nothing on disk, so it's safe to try before asking. If the user declines
+// sudo (or it fails), this goes straight to the ~/.profile fallback — it
+// must never retry trySymlink with allowSudoPrompt after a decline, since a
+// cached sudo credential could then create the symlink despite the "no".
+// trySymlink/profileFallback are injectable so this ordering is testable
+// without a real TTY or sudo.
+export async function resolvePathIntegration(
+  home: string,
+  paths: InstallationPaths,
+  confirmSudo: () => Promise<boolean | symbol>,
+  trySymlink: typeof trySymlinkPath = trySymlinkPath,
+  profileFallback: typeof applyProfileFallback = applyProfileFallback,
+): Promise<PathIntegrationResult> {
+  const initialAttempt = await trySymlink(paths);
+  if (initialAttempt.symlinked) {
+    return { method: "symlink", detail: `${initialAttempt.systemBinDirectory}/shis -> ${paths.shortLauncher}` };
+  }
+  const trySudo = await confirmSudo();
+  const sudoAttempt = !cancelled(trySudo) && trySudo
+    ? await trySymlink(paths, { allowSudoPrompt: true })
+    : { symlinked: false, systemBinDirectory: initialAttempt.systemBinDirectory, reason: initialAttempt.reason };
+  return sudoAttempt.symlinked
+    ? { method: "symlink", detail: `${sudoAttempt.systemBinDirectory}/shis -> ${paths.shortLauncher}` }
+    : profileFallback(home, paths, sudoAttempt.systemBinDirectory, sudoAttempt.reason);
+}
+
 export async function runInteractiveSetup(options: {
   home: string;
   packageRoot: string;
@@ -490,25 +517,10 @@ export async function runInteractiveSetup(options: {
     throw error;
   }
 
-  // Detection first, mutation second: a passwordless symlink attempt touches
-  // nothing on disk, so it's safe to try before asking. ~/.profile is only
-  // ever written once we know the symlink was declined or didn't work.
-  const initialAttempt = await trySymlinkPath(installation.paths);
-  let pathIntegration: PathIntegrationResult;
-  if (initialAttempt.symlinked) {
-    pathIntegration = { method: "symlink", detail: `${initialAttempt.systemBinDirectory}/shis -> ${installation.paths.shortLauncher}` };
-  } else {
-    const trySudo = await confirm({
-      message: "Symlink shis into /usr/local/bin so non-interactive SSH sessions find it? sudo will ask for your password directly.",
-      initialValue: true,
-    });
-    const sudoAttempt = !cancelled(trySudo) && trySudo
-      ? await trySymlinkPath(installation.paths, { allowSudoPrompt: true })
-      : { symlinked: false, systemBinDirectory: initialAttempt.systemBinDirectory };
-    pathIntegration = sudoAttempt.symlinked
-      ? { method: "symlink", detail: `${sudoAttempt.systemBinDirectory}/shis -> ${installation.paths.shortLauncher}` }
-      : await ensurePathIntegration(options.home, installation.paths);
-  }
+  const pathIntegration = await resolvePathIntegration(options.home, installation.paths, () => confirm({
+    message: "Symlink shis into /usr/local/bin so non-interactive SSH sessions find it? sudo will ask for your password directly.",
+    initialValue: true,
+  }));
 
   outro([
     `Launcher: ${installation.paths.shortLauncher}`,

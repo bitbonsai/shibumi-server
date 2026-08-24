@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, chmod, cp, lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { access, appendFile, chmod, cp, lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseConfig, type AppConfig, type ServerConfig } from "./config";
 import { BunCommandRunner, type CommandRunner } from "./deploy";
@@ -268,8 +268,21 @@ async function isManagedLink(link: string, binDirectory: string): Promise<boolea
   }
 }
 
-async function removeRollback(created: string[], removeOne: (link: string) => Promise<void>): Promise<void> {
-  for (const link of created) await removeOne(link).catch(() => {});
+interface CreatedLink {
+  link: string;
+  // Set when this link previously pointed at one of our own launchers, so a
+  // failed second link can restore it instead of just deleting it — a rolled
+  // back attempt must never leave the host worse off than before it started.
+  priorTarget?: string;
+}
+
+async function rollbackLinks(created: CreatedLink[], restore: (link: string, priorTarget?: string) => Promise<void>): Promise<void> {
+  for (const { link, priorTarget } of created) await restore(link, priorTarget).catch(() => {});
+}
+
+interface SymlinkOutcome {
+  ok: boolean;
+  reason?: string;
 }
 
 async function symlinkLaunchers(
@@ -277,48 +290,54 @@ async function symlinkLaunchers(
   systemBinDirectory: string,
   runner: CommandRunner,
   tryPasswordlessSudo: boolean,
-): Promise<boolean> {
+): Promise<SymlinkOutcome> {
   const links: Array<[string, string]> = [
     [paths.shortLauncher, join(systemBinDirectory, "shis")],
     [paths.launcher, join(systemBinDirectory, "shibumi-server")],
   ];
   if (await canWrite(systemBinDirectory)) {
-    const created: string[] = [];
+    const created: CreatedLink[] = [];
     try {
       for (const [target, link] of links) {
-        if (await exists(link) && !(await isManagedLink(link, paths.binDirectory))) {
-          throw new Error(`refusing to replace ${link}: it is not a shibumi-server symlink`);
+        const managed = await isManagedLink(link, paths.binDirectory);
+        if (await exists(link) && !managed) {
+          throw new Error(`${link} already exists and is not a shibumi-server symlink`);
         }
+        const priorTarget = managed ? await readlink(link).catch(() => undefined) : undefined;
         await rm(link, { force: true }).catch(() => {});
         await symlink(target, link);
-        created.push(link);
+        created.push({ link, priorTarget });
       }
-      return true;
-    } catch {
-      // Roll back a half-linked state rather than reporting failure while
-      // leaving one of the two commands actually repointed.
-      await removeRollback(created, (link) => rm(link, { force: true }));
-      return false;
+      return { ok: true };
+    } catch (error) {
+      await rollbackLinks(created, async (link, priorTarget) => {
+        await rm(link, { force: true });
+        if (priorTarget) await symlink(priorTarget, link);
+      });
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
     }
   }
-  if (!tryPasswordlessSudo) return false;
-  const created: string[] = [];
+  if (!tryPasswordlessSudo) return { ok: false };
+  const created: CreatedLink[] = [];
   for (const [target, link] of links) {
+    const priorTarget = (await isManagedLink(link, paths.binDirectory)) ? await readlink(link).catch(() => undefined) : undefined;
     const result = await runner.run("sudo", ["-n", "ln", "-sf", target, link], { capture: true, timeoutMs: 10_000 });
     if (result.exitCode !== 0) {
-      await removeRollback(created, async (createdLink) => {
-        await runner.run("sudo", ["-n", "rm", "-f", createdLink], { capture: true, timeoutMs: 10_000 });
+      await rollbackLinks(created, async (createdLink, createdPriorTarget) => {
+        if (createdPriorTarget) await runner.run("sudo", ["-n", "ln", "-sf", createdPriorTarget, createdLink], { capture: true, timeoutMs: 10_000 });
+        else await runner.run("sudo", ["-n", "rm", "-f", createdLink], { capture: true, timeoutMs: 10_000 });
       });
-      return false;
+      return { ok: false, reason: result.stderr.trim() || `sudo could not link ${link}` };
     }
-    created.push(link);
+    created.push({ link, priorTarget });
   }
-  return true;
+  return { ok: true };
 }
 
-function profileDetail(outcome: "appended" | "existing", paths: InstallationPaths, systemBinDirectory: string): string {
+function profileDetail(outcome: "appended" | "existing", paths: InstallationPaths, systemBinDirectory: string, reason?: string): string {
   const lead = outcome === "existing" ? `${paths.binDirectory} is already on PATH via ~/.profile` : `${paths.binDirectory} added to ~/.profile`;
-  return `${lead} — only takes effect for login shells, so some "ssh host shis ..." sessions still won't see it. For a fix that always works, run: sudo ln -sf ${paths.shortLauncher} ${systemBinDirectory}/shis`;
+  const why = reason ? ` (symlink skipped: ${reason})` : "";
+  return `${lead}${why} — only takes effect for login shells, so some "ssh host shis ..." sessions still won't see it. For a fix that always works, run: sudo ln -sf ${paths.shortLauncher} ${systemBinDirectory}/shis`;
 }
 
 async function appendProfilePath(home: string, binDirectory: string): Promise<"appended" | "existing"> {
@@ -330,11 +349,41 @@ async function appendProfilePath(home: string, binDirectory: string): Promise<"a
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const exportLine = `export PATH="${binDirectory}:$PATH"`;
-  if (content.includes(PROFILE_PATH_MARK) || content.includes(exportLine)) return "existing";
-  const prefix = content.length === 0 || content.endsWith("\n") ? content : `${content}\n`;
-  const separator = prefix.length === 0 ? "" : "\n";
-  await atomicWrite(profilePath, `${prefix}${separator}${PROFILE_PATH_MARK}\n${exportLine}\n`, 0o644);
+  // Distros commonly ship ~/.profile with the $HOME-relative spelling; treat
+  // it as equivalent so an already-correct profile doesn't get a duplicate.
+  const homeRelative = binDirectory.startsWith(`${home}/`) ? binDirectory.slice(home.length) : undefined;
+  const homeExportLine = homeRelative !== undefined ? `export PATH="$HOME${homeRelative}:$PATH"` : undefined;
+  if (content.includes(PROFILE_PATH_MARK) || content.includes(exportLine) || (homeExportLine !== undefined && content.includes(homeExportLine))) {
+    return "existing";
+  }
+  let addition = "";
+  if (content.length > 0) {
+    if (!content.endsWith("\n")) addition += "\n";
+    addition += "\n";
+  }
+  addition += `${PROFILE_PATH_MARK}\n${exportLine}\n`;
+  // Append-only, never replace: a temp-file-then-rename would swap out a
+  // ~/.profile that's a symlink into a dotfile manager's repo for a plain
+  // file, and would force a mode instead of preserving whatever the file
+  // already had (0600, say). appendFile does neither: it writes through an
+  // existing symlink and only sets a mode when the file doesn't exist yet.
+  await appendFile(profilePath, addition, { mode: 0o644 });
   return "appended";
+}
+
+// Writes only the ~/.profile fallback, without retrying any symlink attempt.
+// Callers that already know the user declined sudo (or that it failed) must
+// use this directly rather than ensurePathIntegration, which would otherwise
+// retry a passwordless `sudo -n` symlink regardless of that decision — and
+// succeed anyway if sudo credentials happen to be cached.
+export async function applyProfileFallback(
+  home: string,
+  paths: InstallationPaths,
+  systemBinDirectory: string = DEFAULT_SYSTEM_BIN_DIRECTORY,
+  reason?: string,
+): Promise<PathIntegrationResult> {
+  const outcome = await appendProfilePath(home, paths.binDirectory);
+  return { method: outcome === "existing" ? "profile-existing" : "profile-appended", detail: profileDetail(outcome, paths, systemBinDirectory, reason) };
 }
 
 // Tries the part of PATH integration that never prompts or mutates ~/.profile:
@@ -344,19 +393,18 @@ export async function trySymlinkPath(
   paths: InstallationPaths,
   options: { allowSudoPrompt?: boolean; systemBinDirectory?: string } = {},
   runner: CommandRunner = new BunCommandRunner(),
-): Promise<{ symlinked: boolean; systemBinDirectory: string }> {
+): Promise<{ symlinked: boolean; systemBinDirectory: string; reason?: string }> {
   const systemBinDirectory = options.systemBinDirectory ?? DEFAULT_SYSTEM_BIN_DIRECTORY;
-  let symlinked = false;
-  try {
-    symlinked = await symlinkLaunchers(paths, systemBinDirectory, runner, true);
-    if (!symlinked && options.allowSudoPrompt) {
+  let outcome = await symlinkLaunchers(paths, systemBinDirectory, runner, true);
+  if (!outcome.ok && options.allowSudoPrompt) {
+    try {
       const authorization = await runner.run("sudo", ["-v"], { capture: false, stdin: "inherit", timeoutMs: 120_000 });
-      if (authorization.exitCode === 0) symlinked = await symlinkLaunchers(paths, systemBinDirectory, runner, true);
+      if (authorization.exitCode === 0) outcome = await symlinkLaunchers(paths, systemBinDirectory, runner, true);
+    } catch (error) {
+      outcome = { ok: false, reason: error instanceof Error ? error.message : String(error) };
     }
-  } catch {
-    symlinked = false;
   }
-  return { symlinked, systemBinDirectory };
+  return { symlinked: outcome.ok, systemBinDirectory, reason: outcome.ok ? undefined : outcome.reason };
 }
 
 // Non-interactive `ssh host shis ...` sessions often skip ~/.local/bin: many
@@ -370,18 +418,17 @@ export async function ensurePathIntegration(
   options: { allowSudoPrompt?: boolean; systemBinDirectory?: string; profileFallback?: boolean } = {},
   runner: CommandRunner = new BunCommandRunner(),
 ): Promise<PathIntegrationResult> {
-  const { symlinked, systemBinDirectory } = await trySymlinkPath(paths, options, runner);
+  const { symlinked, systemBinDirectory, reason } = await trySymlinkPath(paths, options, runner);
   if (symlinked) {
     return { method: "symlink", detail: `${systemBinDirectory}/shis -> ${paths.shortLauncher}` };
   }
   if (options.profileFallback === false) {
     return {
       method: "skipped",
-      detail: `${paths.binDirectory} may not be reachable from non-interactive SSH sessions. Run shis init to retry, or symlink manually: sudo ln -sf ${paths.shortLauncher} ${systemBinDirectory}/shis`,
+      detail: `${paths.binDirectory} may not be reachable from non-interactive SSH sessions${reason ? ` (${reason})` : ""}. Run shis init to retry, or symlink manually: sudo ln -sf ${paths.shortLauncher} ${systemBinDirectory}/shis`,
     };
   }
-  const outcome = await appendProfilePath(home, paths.binDirectory);
-  return { method: outcome === "existing" ? "profile-existing" : "profile-appended", detail: profileDetail(outcome, paths, systemBinDirectory) };
+  return applyProfileFallback(home, paths, systemBinDirectory, reason);
 }
 
 function systemdPath(value: string): string {

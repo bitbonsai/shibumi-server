@@ -143,6 +143,9 @@ try {
       { tone: "info", message: `Launcher ${result.paths.shortLauncher}` },
       { tone: "info", message: `PATH ${pathIntegration.detail}` },
     ], `Next: from your local project root, run:\n${SHIP_INSTALL_COMMAND}`);
+    // Quiet output must stay silent on success, but a skipped PATH fix is a
+    // real gap the next `ssh host shis ...` will hit; leave one breadcrumb.
+    else if (pathIntegration.method === "skipped") console.error(`shis: ${pathIntegration.detail}`);
   } else if (command.name === "uninstall") {
     requireLinux();
     if (!command.yes) {

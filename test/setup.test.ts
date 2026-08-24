@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
 import { addApp, initializeInstallation, installationPaths, type CheckoutManager, type ServiceManager } from "../src/install";
-import { checkAppHealth, confirmCheckoutReplacement, defaultCheckout, findCommand, formatReadySummary, mergeSetupAnswers, nextAvailablePort, registrationOutcome, resolveComposeCommand, runSetRepository, setupRequirementIssues, withSpinnerPause, type InteractiveUi } from "../src/setup";
+import { checkAppHealth, confirmCheckoutReplacement, defaultCheckout, findCommand, formatReadySummary, mergeSetupAnswers, nextAvailablePort, registrationOutcome, resolveComposeCommand, resolvePathIntegration, runSetRepository, setupRequirementIssues, withSpinnerPause, type InteractiveUi } from "../src/setup";
 
 const roots: string[] = [];
 
@@ -341,5 +341,61 @@ describe("runSetRepository", () => {
       .rejects.toThrow("cannot clone");
     expect(ui.calls.spinnerError).toEqual(["Could not repoint example.com"]);
     expect(ui.calls.outro).toHaveLength(0);
+  });
+});
+
+describe("resolvePathIntegration", () => {
+  const paths = installationPaths("/home/deploy");
+
+  test("skips the sudo question entirely when the initial passwordless attempt already succeeds", async () => {
+    let confirmCalled = false;
+    const trySymlink = async () => ({ symlinked: true, systemBinDirectory: "/usr/local/bin" });
+    const profileFallback = async (): Promise<never> => { throw new Error("must not be called"); };
+
+    const result = await resolvePathIntegration("/home/deploy", paths, async () => {
+      confirmCalled = true;
+      return true;
+    }, trySymlink, profileFallback);
+
+    expect(confirmCalled).toBe(false);
+    expect(result).toEqual({ method: "symlink", detail: `/usr/local/bin/shis -> ${paths.shortLauncher}` });
+  });
+
+  test("does not retry the sudo symlink after the user declines, even once", async () => {
+    // A cached sudo credential could make `sudo -n` succeed on a second try
+    // despite the decline; the fix is to never attempt it again, not to hope
+    // it fails.
+    const trySymlinkCalls: Array<{ allowSudoPrompt?: boolean } | undefined> = [];
+    const trySymlink = async (_paths: typeof paths, options?: { allowSudoPrompt?: boolean }) => {
+      trySymlinkCalls.push(options);
+      return { symlinked: false, systemBinDirectory: "/usr/local/bin", reason: "not writable" };
+    };
+    const profileFallbackCalls: Array<[string | undefined, string | undefined]> = [];
+    const profileFallback = async (_home: string, _paths: typeof paths, systemBinDirectory?: string, reason?: string) => {
+      profileFallbackCalls.push([systemBinDirectory, reason]);
+      return { method: "profile-appended" as const, detail: "fallback detail" };
+    };
+
+    const result = await resolvePathIntegration("/home/deploy", paths, async () => false, trySymlink, profileFallback);
+
+    expect(trySymlinkCalls).toEqual([undefined]);
+    expect(profileFallbackCalls).toEqual([["/usr/local/bin", "not writable"]]);
+    expect(result).toEqual({ method: "profile-appended", detail: "fallback detail" });
+  });
+
+  test("retries with allowSudoPrompt only when the user accepts", async () => {
+    const trySymlinkCalls: Array<{ allowSudoPrompt?: boolean } | undefined> = [];
+    const trySymlink = async (_paths: typeof paths, options?: { allowSudoPrompt?: boolean }) => {
+      trySymlinkCalls.push(options);
+      return options?.allowSudoPrompt
+        ? { symlinked: true, systemBinDirectory: "/usr/local/bin" }
+        : { symlinked: false, systemBinDirectory: "/usr/local/bin", reason: "not writable" };
+    };
+    const profileFallback = async (): Promise<never> => { throw new Error("must not be called"); };
+
+    const result = await resolvePathIntegration("/home/deploy", paths, async () => true, trySymlink, profileFallback);
+
+    expect(trySymlinkCalls).toEqual([undefined, { allowSudoPrompt: true }]);
+    expect(result).toEqual({ method: "symlink", detail: `/usr/local/bin/shis -> ${paths.shortLauncher}` });
   });
 });

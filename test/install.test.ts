@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { addApp, appIdForDomain, enablePrebuiltApp, ensurePathIntegration, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, setAppRepository, setDeploymentMode, SystemdUserServiceManager, trySymlinkPath, uninstallInstallation, type CheckoutManager, type ServiceManager } from "../src/install";
+import { addApp, appIdForDomain, applyProfileFallback, enablePrebuiltApp, ensurePathIntegration, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, setAppRepository, setDeploymentMode, SystemdUserServiceManager, trySymlinkPath, uninstallInstallation, type CheckoutManager, type ServiceManager } from "../src/install";
 import packageJson from "../package.json";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
 
@@ -717,6 +717,51 @@ describe("PATH integration", () => {
     expect(profile).toContain(`export PATH="${result.paths.binDirectory}:$PATH"`);
   });
 
+  test("appends through a symlinked ~/.profile instead of replacing it", async () => {
+    // Dotfile managers commonly symlink ~/.profile into a managed repo; a
+    // temp-file-then-rename write would silently swap that symlink out for a
+    // plain file, so the appended line would never reach the real dotfile.
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const dotfilesRoot = await temporaryHome();
+    const realProfile = join(dotfilesRoot, "profile");
+    await writeFile(realProfile, "# managed by dotfiles\n");
+    await symlink(realProfile, join(home, ".profile"));
+
+    await applyProfileFallback(home, result.paths, "/usr/local/bin");
+
+    expect((await lstat(join(home, ".profile"))).isSymbolicLink()).toBe(true);
+    expect(await readlink(join(home, ".profile"))).toBe(realProfile);
+    const content = await readFile(realProfile, "utf8");
+    expect(content).toContain("# managed by dotfiles");
+    expect(content).toContain(`export PATH="${result.paths.binDirectory}:$PATH"`);
+  });
+
+  test("preserves an existing ~/.profile's mode instead of forcing 0644", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const profilePath = join(home, ".profile");
+    await writeFile(profilePath, "umask 077\n");
+    await chmod(profilePath, 0o600);
+
+    await applyProfileFallback(home, result.paths, "/usr/local/bin");
+
+    expect((await stat(profilePath)).mode & 0o777).toBe(0o600);
+    expect(await readFile(profilePath, "utf8")).toContain(`export PATH="${result.paths.binDirectory}:$PATH"`);
+  });
+
+  test("treats the $HOME-relative spelling as already on PATH", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    await writeFile(join(home, ".profile"), 'export PATH="$HOME/.local/bin:$PATH"\n');
+
+    const outcome = await applyProfileFallback(home, result.paths, "/usr/local/bin");
+
+    expect(outcome.method).toBe("profile-existing");
+    const profile = await readFile(join(home, ".profile"), "utf8");
+    expect(profile).toBe('export PATH="$HOME/.local/bin:$PATH"\n');
+  });
+
   test("does not duplicate the ~/.profile entry on a second run", async () => {
     const home = await temporaryHome();
     const { result } = await initialized(home);
@@ -767,7 +812,50 @@ describe("PATH integration", () => {
 
     expect(outcome.method).not.toBe("symlink");
     expect(await readFile(join(systemBinDirectory, "shis"), "utf8")).toBe("#!/bin/sh\necho not shibumi\n");
+    // The reason must survive into the fallback detail; silently degrading
+    // with no explanation leaves the user guessing why the symlink failed.
+    expect(outcome.detail).toContain("symlink skipped:");
+    expect(outcome.detail).toContain(`${join(systemBinDirectory, "shis")} already exists and is not a shibumi-server symlink`);
   });
+
+  test.skipIf(process.getuid?.() === 0)(
+    "restores the prior working sudo-linked target instead of deleting it when a re-link fails",
+    async () => {
+      // A failed re-link must never leave the host worse off: if `shis` was
+      // already correctly symlinked from an earlier run, a failure linking
+      // `shibumi-server` must put the `shis` link back, not just remove it.
+      const home = await temporaryHome();
+      const { result } = await initialized(home);
+      const systemBinRoot = await temporaryHome();
+      const systemBinDirectory = join(systemBinRoot, "bin");
+      await mkdir(systemBinDirectory, { recursive: true });
+      // isManagedLink only recognizes a target inside our own ~/.local/bin as
+      // "ours", so the prior link has to point at the real launcher, exactly
+      // like a link an earlier successful run would have created.
+      const priorTarget = result.paths.shortLauncher;
+      await symlink(priorTarget, join(systemBinDirectory, "shis"));
+      await chmod(systemBinDirectory, 0o555); // force the sudo path: readable, not directly writable
+      const runner = new FakeRunner();
+      runner.results = [
+        { exitCode: 0, stdout: "", stderr: "" }, // sudo -n ln -sf for shis succeeds, replacing the prior link
+        { exitCode: 1, stdout: "", stderr: "restart required" }, // sudo -n ln -sf for shibumi-server fails
+        { exitCode: 0, stdout: "", stderr: "" }, // rollback: sudo -n ln -sf restores the prior target for shis
+      ];
+
+      try {
+        const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
+
+        expect(outcome.method).not.toBe("symlink");
+        expect(runner.calls).toEqual([
+          ["sudo", "-n", "ln", "-sf", result.paths.shortLauncher, join(systemBinDirectory, "shis")],
+          ["sudo", "-n", "ln", "-sf", result.paths.launcher, join(systemBinDirectory, "shibumi-server")],
+          ["sudo", "-n", "ln", "-sf", priorTarget, join(systemBinDirectory, "shis")],
+        ]);
+      } finally {
+        await chmod(systemBinDirectory, 0o755);
+      }
+    },
+  );
 
   test("re-linking a second time safely replaces its own prior symlink", async () => {
     const home = await temporaryHome();
