@@ -12,8 +12,8 @@
  */
 
 import { cancel, confirm, intro, isCancel, log, outro, select, spinner as animatedSpinner, text } from "@clack/prompts";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { createConnection } from "node:net";
 import { dirname, join, resolve } from "node:path";
 
@@ -25,7 +25,7 @@ const SERVER_HOSTNAME = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 const COMMIT = /^[a-f0-9]{40}$/;
 const SERVER_CLI = "~/.local/bin/shibumi-server";
 const LATEST_SOURCE = "https://shibumistack.dev/ship/latest.ts";
-const CURRENT_SOURCE = "https://shibumistack.dev/ship/v41.ts";
+const CURRENT_SOURCE = "https://shibumistack.dev/ship/v44.ts";
 let sshControlDirectory: string | undefined;
 let sshControlTarget: string | undefined;
 
@@ -92,9 +92,19 @@ interface ShipOptions {
   server?: string;
   domain?: string;
   trigger?: "ship" | "github-push";
+  staticSite: boolean;
+  outputDir?: string;
+  buildScript?: string;
+  spa: boolean;
 }
 
-let options: ShipOptions = { setup: false, update: false, rollback: false, logs: false, status: false, dev: false, rebuild: false, yes: false };
+export interface StaticSiteConfig {
+  outputDir: string;
+  buildScript?: string;
+  spa: boolean;
+}
+
+let options: ShipOptions = { setup: false, update: false, rollback: false, logs: false, status: false, dev: false, rebuild: false, yes: false, staticSite: false, spa: false };
 let agentRun = false;
 
 export function isAgentExecution(env: NodeJS.ProcessEnv = process.env, stdinTTY = Boolean(process.stdin.isTTY), stdoutTTY = Boolean(process.stdout.isTTY)): boolean {
@@ -136,7 +146,7 @@ function spinner(): ShipSpinner {
 }
 
 export function parseShipArgs(args: string[]): ShipOptions {
-  const parsed: ShipOptions = { setup: false, update: false, rollback: false, logs: false, status: false, dev: false, rebuild: false, yes: false };
+  const parsed: ShipOptions = { setup: false, update: false, rollback: false, logs: false, status: false, dev: false, rebuild: false, yes: false, staticSite: false, spa: false };
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--") continue;
@@ -148,11 +158,15 @@ export function parseShipArgs(args: string[]): ShipOptions {
     else if (argument === "--dev") parsed.dev = true;
     else if (argument === "--rebuild") parsed.rebuild = true;
     else if (argument === "--yes" || argument === "-y") parsed.yes = true;
-    else if (argument === "--server" || argument === "--domain" || argument === "--trigger") {
+    else if (argument === "--static") parsed.staticSite = true;
+    else if (argument === "--spa") parsed.spa = true;
+    else if (argument === "--server" || argument === "--domain" || argument === "--trigger" || argument === "--output-dir" || argument === "--build-script") {
       const value = args[index + 1];
       if (!value || value.startsWith("-")) throw new Error(`${argument} requires a value`);
       if (argument === "--server") parsed.server = value;
       else if (argument === "--domain") parsed.domain = value;
+      else if (argument === "--output-dir") parsed.outputDir = value;
+      else if (argument === "--build-script") parsed.buildScript = value;
       else if (value === "ship" || value === "github-push") parsed.trigger = value;
       else throw new Error("--trigger must be ship or github-push");
       index += 1;
@@ -161,6 +175,13 @@ export function parseShipArgs(args: string[]): ShipOptions {
   if ([parsed.setup, parsed.update, parsed.rollback, parsed.logs, parsed.status, parsed.dev].filter(Boolean).length > 1) throw new Error("choose only one ship action");
   if (parsed.rebuild && (parsed.setup || parsed.update || parsed.rollback || parsed.logs || parsed.status || parsed.dev)) throw new Error("--rebuild applies only to shipping");
   if (parsed.trigger && !parsed.setup) throw new Error("--trigger requires --setup");
+  if ((parsed.staticSite || parsed.outputDir || parsed.buildScript || parsed.spa) && !parsed.setup) throw new Error("--static, --output-dir, --build-script, and --spa require --setup");
+  if ((parsed.outputDir || parsed.buildScript || parsed.spa) && !parsed.staticSite) throw new Error("--output-dir, --build-script, and --spa require --static");
+  if (parsed.outputDir) {
+    const problem = staticOutputDirProblem(parsed.outputDir);
+    if (problem) throw new Error(problem);
+  }
+  if (parsed.buildScript && !/^[A-Za-z0-9][A-Za-z0-9:_-]*$/.test(parsed.buildScript)) throw new Error("--build-script must be a package.json script name");
   if (parsed.server && !SSH_TARGET.test(parsed.server)) throw new Error("--server must be an SSH host or user@host without spaces");
   if (parsed.domain && !DOMAIN.test(parsed.domain)) throw new Error("--domain must be a lowercase public hostname");
   return parsed;
@@ -487,6 +508,227 @@ data
   };
 }
 
+// ── Static output shipping ─────────────────────────────────────────────
+// Static params live as labels in the committed compose file, so they ride
+// the git archive into every build context and survive the server-downloaded
+// shibumi-server.json rewrite. Builds always run on the user's machine (their
+// toolchain: Ruby, Node, anything); the image never contains a build stage.
+
+const STATIC_OUTPUT_DIRS = ["dist", "public", "build", "out", "_site"];
+const BUSYBOX_IMAGE = "busybox:1.37-musl@sha256:fc6dddc4c44b1bfe37f41cae8e67d1693828e8f42a91862816d7953e2c9d3f23";
+const STATIC_SEGMENT = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
+const BUILD_SCRIPT_NAME = /^[A-Za-z0-9][A-Za-z0-9:_-]*$/;
+
+export function staticOutputDirProblem(value: string): string | undefined {
+  if (!value) return "output directory is required";
+  if (value.startsWith("/") || value.includes("\\") || /^[A-Za-z]:/.test(value)) return `output directory must be relative to the project root, got ${value}`;
+  const segments = value.split("/");
+  if (segments.some((segment) => !STATIC_SEGMENT.test(segment) || segment.endsWith(".") || segment === ".." )) {
+    return `output directory segments must be plain names (letters, digits, ".", "_", "-"), got ${value}`;
+  }
+  return undefined;
+}
+
+// Walk the first service's labels block structurally instead of regex-scanning
+// raw YAML, so label-shaped text inside block scalars or other services can
+// never masquerade as static configuration.
+export function staticConfigFromCompose(compose: string): StaticSiteConfig | undefined {
+  const values: Record<string, string> = {};
+  let inServices = false;
+  let serviceCount = 0;
+  let inLabels = false;
+  for (const line of compose.split("\n")) {
+    if (/^\S/.test(line)) {
+      inServices = /^services:\s*$/.test(line);
+      inLabels = false;
+      continue;
+    }
+    if (!inServices) continue;
+    if (/^ {2}\S/.test(line)) {
+      serviceCount += 1;
+      inLabels = false;
+      continue;
+    }
+    if (serviceCount !== 1) continue;
+    if (/^ {4}labels:\s*$/.test(line)) {
+      inLabels = true;
+      continue;
+    }
+    if (/^ {4}\S/.test(line)) {
+      inLabels = false;
+      continue;
+    }
+    if (!inLabels) continue;
+    const match = /^ {6}dev\.shibumistack\.static\.(output|build|spa): "?([^"]*)"?\s*$/.exec(line);
+    if (match) values[match[1]!] = match[2]!;
+  }
+  if (values.output === undefined) return undefined;
+  const problem = staticOutputDirProblem(values.output);
+  if (problem) throw new Error(`compose static labels are invalid: ${problem}`);
+  if (values.build !== undefined && !BUILD_SCRIPT_NAME.test(values.build)) throw new Error("compose static build label must be a package.json script name");
+  return { outputDir: values.output, buildScript: values.build || undefined, spa: values.spa === "true" };
+}
+
+export function staticHttpdConf(has404: boolean): string {
+  return [
+    ...(has404 ? ["E404:404.html"] : []),
+    "I:index.html",
+    ".md:text/plain",
+    ".txt:text/plain",
+    ".json:application/json",
+    ".xml:application/xml",
+    ".svg:image/svg+xml",
+    ".webp:image/webp",
+    ".avif:image/avif",
+    ".woff2:font/woff2",
+    "",
+  ].join("\n");
+}
+
+// SPA fallback needs unknown paths answered with index.html and status 200,
+// which BusyBox httpd cannot do; those sites get a small owned Bun server.
+export function staticServerSource(outputDir: string): string {
+  return `// Owned static file server for SPA fallback, generated by ship:setup.
+// Serves ${JSON.stringify(outputDir)} and answers unknown paths with index.html (200).
+import { join, normalize } from "node:path";
+
+const ROOT = ${JSON.stringify(`/www`)};
+const server = Bun.serve({
+  port: 3000,
+  async fetch(request) {
+    if (request.method !== "GET" && request.method !== "HEAD") return new Response("Not found", { status: 404 });
+    let pathname;
+    try {
+      pathname = decodeURIComponent(new URL(request.url).pathname);
+    } catch {
+      return new Response("Bad request", { status: 400 });
+    }
+    const safe = normalize(pathname).replaceAll("\\\\", "/");
+    if (safe.includes("..")) return new Response("Not found", { status: 404 });
+    const candidate = safe.endsWith("/") ? join(ROOT, safe, "index.html") : join(ROOT, safe);
+    if (!candidate.startsWith(ROOT)) return new Response("Not found", { status: 404 });
+    const file = Bun.file(candidate);
+    if (await file.exists()) return new Response(file);
+    return new Response(Bun.file(join(ROOT, "index.html")));
+  },
+});
+console.log(\`Serving \${ROOT} on http://localhost:\${server.port}\`);
+process.on("SIGTERM", () => { void server.stop().then(() => process.exit(0)); });
+process.on("SIGINT", () => { void server.stop().then(() => process.exit(0)); });
+`;
+}
+
+export function staticComposeLabels(config: StaticSiteConfig): string {
+  return [
+    `      dev.shibumistack.static.output: ${JSON.stringify(config.outputDir)}`,
+    ...(config.buildScript ? [`      dev.shibumistack.static.build: ${JSON.stringify(config.buildScript)}`] : []),
+    `      dev.shibumistack.static.spa: "${config.spa}"`,
+  ].join("\n");
+}
+
+export function staticDeploymentFileTemplates(config: StaticSiteConfig): Record<string, string> {
+  const dockerfile = config.spa
+    ? `FROM oven/bun:alpine
+WORKDIR /app
+COPY ${config.outputDir} /www
+COPY scripts/static-server.ts ./static-server.ts
+USER bun
+EXPOSE 3000
+CMD ["bun", "static-server.ts"]
+`
+    : `FROM ${BUSYBOX_IMAGE} AS busybox
+
+FROM scratch
+COPY --from=busybox /bin/busybox /busybox
+COPY --chown=65534:65534 ${config.outputDir} /www
+USER 65534:65534
+EXPOSE 3000
+ENTRYPOINT ["/busybox", "httpd", "-f", "-p", "3000", "-h", "/www", "-c", "/www/httpd.conf"]
+`;
+  const healthcheck = config.spa
+    ? `["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]`
+    : `["CMD", "/busybox", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://127.0.0.1:3000/"]`;
+  return {
+    Dockerfile: dockerfile,
+    "compose.yaml": `services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:\${SHIBUMI_PORT:-9001}:3000"
+    labels:
+${staticComposeLabels(config)}
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test: ${healthcheck}
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+`,
+    ".dockerignore": config.spa
+      ? `*\n!${config.outputDir}\n!scripts\nscripts/*\n!scripts/static-server.ts\n`
+      : `*\n!${config.outputDir}\n`,
+  };
+}
+
+// Runs inside the clean git-archive build context so the image only ever
+// contains output derived from the exact committed tree.
+export async function prepareStaticContext(context: string, config: StaticSiteConfig, execute: (args: string[], cwd: string) => Promise<Result>): Promise<void> {
+  const problem = staticOutputDirProblem(config.outputDir);
+  if (problem) throw new Error(problem);
+  const contextReal = await realpath(context);
+  const outputPath = resolve(contextReal, config.outputDir);
+
+  if (config.buildScript) {
+    if (!BUILD_SCRIPT_NAME.test(config.buildScript)) throw new Error("build script must be a package.json script name");
+    const packageJson = JSON.parse(await readFile(join(contextReal, "package.json"), "utf8")) as { scripts?: Record<string, unknown>; dependencies?: object; devDependencies?: object };
+    if (typeof packageJson.scripts?.[config.buildScript] !== "string") {
+      throw new Error(`package.json has no "${config.buildScript}" script.\n\nNext: restore the build script or run bun ship:setup again.`);
+    }
+    if (packageJson.dependencies || packageJson.devDependencies) {
+      const frozen = await Bun.file(join(contextReal, "bun.lock")).exists();
+      const install = await execute(frozen ? ["bun", "install", "--frozen-lockfile"] : ["bun", "install"], contextReal);
+      if (install.exitCode !== 0) throw new Error(`dependency install failed in the clean build context.\n\nNext: verify bun install succeeds from a fresh clone, then run bun ship.\n${install.stderr.trim()}`);
+    }
+    const build = await execute(["bun", "run", "--", config.buildScript], contextReal);
+    if (build.exitCode !== 0) throw new Error(`static build failed in the clean build context.\n\nNext: verify bun run ${config.buildScript} succeeds from a fresh clone, then run bun ship.\n${build.stderr.trim()}`);
+  }
+
+  // Ancestors must be real directories: a committed symlink such as
+  // dist -> /etc would otherwise resolve outside the clean context.
+  let walk = contextReal;
+  for (const segment of config.outputDir.split("/")) {
+    walk = join(walk, segment);
+    const entry = await lstat(walk).catch(() => undefined);
+    if (!entry) {
+      throw new Error(config.buildScript
+        ? `static output ${config.outputDir}/ is missing after the build.\n\nNext: verify the build writes ${config.outputDir}/, or run bun ship:setup with the correct --output-dir.`
+        : `static output ${config.outputDir}/ is not in the commit.\n\nNext: commit the built output, or run bun ship:setup with a --build-script.`);
+    }
+    if (entry.isSymbolicLink() || !entry.isDirectory()) throw new Error(`static output path ${config.outputDir} contains a symlink or non-directory at ${walk}.\n\nNext: use a real directory, then run bun ship.`);
+  }
+  if (await realpath(outputPath) !== outputPath || !outputPath.startsWith(contextReal + "/")) {
+    throw new Error("static output directory escapes the project root");
+  }
+
+  const listing = await execute(["find", outputPath, "-type", "l"], contextReal);
+  if (listing.exitCode !== 0) throw new Error(`symlink scan failed for ${config.outputDir}/.\n\nNext: verify the output directory is readable, then run bun ship.`);
+  if (listing.stdout.trim()) throw new Error(`static output contains symlinks, which the image cannot verify:\n${listing.stdout.trim()}\n\nNext: replace symlinks with real files, then run bun ship.`);
+  if (!await Bun.file(join(outputPath, "index.html")).exists()) {
+    throw new Error(`static output ${config.outputDir}/ has no index.html.\n\nNext: verify the build output, then run bun ship.`);
+  }
+  if (!config.spa) {
+    const has404 = await Bun.file(join(outputPath, "404.html")).exists();
+    await writeFile(join(outputPath, "httpd.conf"), staticHttpdConf(has404), { mode: 0o644 });
+  }
+}
+
 export function composeFileFromTracked(files: string[]): string {
   const candidates = composeCandidates(files);
   for (const preferred of ["compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"]) {
@@ -547,11 +789,25 @@ async function prepareCompose(): Promise<boolean> {
   }
 
   if (agentRun && !options.yes) {
-    throw new Error("Compose deployment files are missing.\n\nAgent: ask user for permission to generate Dockerfile, compose.yaml, and .dockerignore, then run bun ship:setup -y.");
+    throw new Error("Compose deployment files are missing.\n\nAgent: ask user for permission to generate deployment files, then run bun ship:setup -y (add --static --output-dir <dir> for static output).");
   }
-  if (!options.yes) {
-    const accepted = await confirm({ message: "No Compose deployment found. Generate recommended Bun deployment files?", initialValue: true });
-    if (isCancel(accepted) || !accepted) throw new Error(missingComposeMessage(branch, []));
+  let wantStatic = options.staticSite;
+  if (!options.yes && !options.staticSite) {
+    const kind = await select({
+      message: "What are you shipping?",
+      options: [
+        { value: "server", label: "Bun server app: container runs your start script" },
+        { value: "static", label: "Static site: prebuilt files from any framework" },
+      ],
+    });
+    if (isCancel(kind)) throw new Error(missingComposeMessage(branch, []));
+    wantStatic = kind === "static";
+  }
+
+  if (wantStatic) {
+    await generateStaticDeployment();
+    outro("Review generated deployment files.\n\nNext: commit and push these changes, then run bun ship:setup.");
+    return true;
   }
 
   const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { scripts?: Record<string, unknown> };
@@ -570,6 +826,92 @@ async function prepareCompose(): Promise<boolean> {
   log.success(`Generated ${written.join(", ")}`);
   outro("Review generated deployment files and verify app binds to 0.0.0.0 and reads PORT.\n\nNext: commit and push these changes, then run bun ship:setup.");
   return true;
+}
+
+const SHIP_SCRIPTS = {
+  ship: "bun scripts/ship.ts",
+  "ship:setup": "bun scripts/ship.ts --setup",
+  "ship:update": "bun scripts/ship.ts --update",
+  "ship:status": "bun scripts/ship.ts --status",
+  "ship:logs": "bun scripts/ship.ts --logs",
+};
+
+async function generateStaticDeployment(): Promise<void> {
+  // Script-less generators (Jekyll) have no package.json; create a minimal one
+  // so bun ship commands and an optional build script have a home.
+  const packagePath = join(root, "package.json");
+  let packageJson: { name?: unknown; scripts?: Record<string, unknown> };
+  if (await Bun.file(packagePath).exists()) {
+    packageJson = JSON.parse(await readFile(packagePath, "utf8")) as typeof packageJson;
+  } else {
+    const name = root.split("/").pop()?.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[._-]+|[._-]+$/g, "") || "static-site";
+    packageJson = { name, private: true, scripts: { ...SHIP_SCRIPTS } } as typeof packageJson;
+    await writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`, { mode: 0o644 });
+    log.success("Created minimal package.json");
+  }
+
+  let buildScript = options.buildScript;
+  if (buildScript && typeof packageJson.scripts?.[buildScript] !== "string") {
+    throw new Error(`package.json has no "${buildScript}" script.\n\nNext: add it (for example "build": "jekyll build"), then run bun ship:setup again.`);
+  }
+  if (!buildScript && typeof packageJson.scripts?.build === "string") buildScript = "build";
+
+  let outputDir = options.outputDir;
+  if (!outputDir) {
+    const detected: string[] = [];
+    for (const candidate of STATIC_OUTPUT_DIRS) {
+      if ((await stat(join(root, candidate)).catch(() => undefined))?.isDirectory()) detected.push(candidate);
+    }
+    if (agentRun || options.yes) {
+      if (detected.length === 1) outputDir = detected[0];
+      else throw new Error(`Static output directory could not be inferred.\n\nAgent: ask user which directory the build writes (${STATIC_OUTPUT_DIRS.join(", ")}, or custom), then run bun ship:setup -y --static --output-dir <dir>.`);
+    } else {
+      const answer = await text({
+        message: "Which directory holds the built site?",
+        placeholder: detected[0] ?? "dist",
+        defaultValue: detected[0] ?? "",
+        validate: (value) => value ? staticOutputDirProblem(value) : "Enter the build output directory",
+      });
+      if (isCancel(answer)) throw new Error("setup cancelled");
+      outputDir = answer;
+    }
+  }
+  const problem = staticOutputDirProblem(outputDir!);
+  if (problem) throw new Error(problem);
+
+  let spa = options.spa;
+  if (!spa && !agentRun && !options.yes) {
+    const answer = await confirm({ message: "Single-page app? (unknown paths serve index.html)", initialValue: false });
+    if (isCancel(answer)) throw new Error("setup cancelled");
+    spa = answer;
+  }
+
+  if (!buildScript) {
+    const tracked = await run(["git", "ls-files", "--", outputDir!], { allowFailure: true });
+    if (!tracked.stdout.trim()) {
+      throw new Error(`Without a build script, ${outputDir}/ must be committed so shipped images match the exact commit.\n\nNext: commit the built output, or rerun with --build-script <name>.`);
+    }
+  }
+
+  const staticConfig: StaticSiteConfig = { outputDir: outputDir!, buildScript, spa };
+  const templates = staticDeploymentFileTemplates(staticConfig);
+  const targets = [...Object.keys(templates), ...(spa ? ["scripts/static-server.ts"] : [])];
+  const conflicts: string[] = [];
+  for (const name of targets) if (await Bun.file(join(root, name)).exists()) conflicts.push(name);
+  if (conflicts.length > 0) {
+    throw new Error(`Static setup would generate ${conflicts.join(", ")}, which already exist and may package or run something else.\n\nNext: remove or rename them, then run bun ship:setup again.`);
+  }
+  const written: string[] = [];
+  for (const [name, contents] of Object.entries(templates)) {
+    await writeFile(join(root, name), contents, { mode: 0o644 });
+    written.push(name);
+  }
+  if (spa) {
+    await mkdir(join(root, "scripts"), { recursive: true });
+    await writeFile(join(root, "scripts", "static-server.ts"), staticServerSource(staticConfig.outputDir), { mode: 0o644 });
+    written.push("scripts/static-server.ts");
+  }
+  log.success(`Generated ${written.join(", ")}`);
 }
 
 async function inferredProject() {
@@ -1118,6 +1460,12 @@ async function buildAndUpload(config: ClientConfig, target: string, commit: stri
     await mkdir(context);
     await run(["git", "archive", "--format=tar", "--output", sourceArchive, commit]);
     await run(["tar", "-xf", sourceArchive, "-C", context]);
+    const staticConfig = staticConfigFromCompose(await readFile(join(context, project.composeFile), "utf8"));
+    if (staticConfig) {
+      progress.message(staticConfig.buildScript ? `Building static output with bun run ${staticConfig.buildScript}` : `Verifying committed ${staticConfig.outputDir}/`);
+      await prepareStaticContext(context, staticConfig, (args, cwd) => run(args, { cwd, allowFailure: true }));
+      progress.message(`Verified static output in ${staticConfig.outputDir}/`);
+    }
     const sourceTree = (await git("rev-parse", `${commit}^{tree}`)).toLowerCase();
     const labels = prebuiltLabels(config.appId, commit, project.repository, sourceTree, project.packageJson.version);
     const buildLabels = Object.entries(labels).map(([name, value]) => `        ${JSON.stringify(name)}: ${JSON.stringify(value)}`).join("\n");
@@ -1593,7 +1941,80 @@ async function updateShipClient(): Promise<void> {
   outro("Ship client updated. Review and commit scripts/ship.ts.");
 }
 
+// Manage per-app environment variables on the server (secrets and per-deploy
+// config). Values travel over the existing SSH channel to `shis env`, which
+// persists them server-side and injects them at deploy. Not part of
+// parseShipArgs: `env` has its own positional grammar.
+//
+//   bun ship:env set KEY=VALUE [KEY=VALUE...]   set individual variables
+//   bun ship:env import [file]                  import a .env file (default .env.production)
+//   bun ship:env list                           list variable names (never values)
+//   bun ship:env rm KEY [KEY...]                remove variables
+async function runEnv(args: string[]): Promise<void> {
+  const [sub, ...rest] = args;
+  const config = await readConfig();
+  if (!config) throw new Error("Shibumi setup is missing.\n\nNext: run bun ship:setup.");
+  const base = ["env", "SHIBUMI_SKIP_UPDATE_CHECK=1", SERVER_CLI, "env"];
+  const applyNote = "Redeploy to apply: bun ship.";
+  try {
+    const target = await projectTarget(config);
+    if (sub === "list") {
+      const result = await ssh(target, [...base, "list", config.appId], { allowFailure: true });
+      if (result.exitCode !== 0) throw new Error(result.stderr.trim() || "could not list environment variables");
+      process.stdout.write(result.stdout.trim() ? `${result.stdout.trim()}\n` : "No variables set.\n");
+      return;
+    }
+    if (sub === "rm") {
+      if (rest.length === 0) throw new Error("usage: bun ship:env rm <KEY...>");
+      const result = await ssh(target, [...base, "rm", config.appId, ...rest], { allowFailure: true });
+      if (result.exitCode !== 0) throw new Error(result.stderr.trim() || "could not remove variables");
+      process.stdout.write(`${result.stdout.trim()}\n${applyNote}\n`);
+      return;
+    }
+    if (sub === "set" || sub === "import") {
+      let content: string;
+      if (sub === "import") {
+        const file = rest[0] ?? ".env.production";
+        content = await readFile(join(root, file), "utf8").catch(() => {
+          throw new Error(`Cannot read ${file}. Pass a path: bun ship:env import <file>.`);
+        });
+      } else {
+        if (rest.length === 0) throw new Error("usage: bun ship:env set KEY=VALUE [KEY=VALUE...]");
+        for (const pair of rest) {
+          if (!/^[A-Z_][A-Z0-9_]*=/.test(pair)) throw new Error(`not KEY=VALUE (KEY must be UPPER_SNAKE): ${pair}`);
+        }
+        content = `${rest.join("\n")}\n`;
+      }
+      // Stage in a 0600 temp file and pipe it over SSH stdin, so values never
+      // appear in the process list on either machine.
+      const dir = await mkdtemp(join(tmpdir(), "shibumi-env-"));
+      const tmp = join(dir, "env");
+      await writeFile(tmp, content, { mode: 0o600 });
+      try {
+        const result = await ssh(target, [...base, "set", config.appId], { inputFile: tmp, allowFailure: true });
+        if (result.exitCode !== 0) throw new Error(result.stderr.trim() || "could not set variables");
+        process.stdout.write(`${result.stdout.trim()}\n${applyNote}\n`);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+      return;
+    }
+    throw new Error("usage: bun ship:env set KEY=VALUE | import [file] | list | rm <KEY...>");
+  } finally {
+    await closeSshControl();
+  }
+}
+
 export function runShipCli(): void {
+  const rawArgs = process.argv.slice(2);
+  if (rawArgs[0] === "--env") {
+    agentRun = isAgentExecution();
+    runEnv(rawArgs.slice(1)).catch((error) => {
+      cancel(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    });
+    return;
+  }
   try {
     options = parseShipArgs(process.argv.slice(2));
     agentRun = isAgentExecution();
