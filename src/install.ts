@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { parseConfig, type AppConfig, type ServerConfig } from "./config";
 import { BunCommandRunner, type CommandRunner } from "./deploy";
 import { SHIP_INSTALL_COMMAND } from "./terminal-ui";
+import { appEnvPath } from "./app-env";
 
 const PACKAGE_FILES = ["src", "docs", "examples", "README.md", "LICENSE", "package.json", "runtime-lock.json"];
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -546,6 +547,9 @@ export async function removeApp(
   await rm(join(paths.statusDirectory, "queue", `${appId}.json`), { force: true });
   await rm(join(paths.historyDirectory, `${appId}.jsonl`), { force: true });
   await rm(join(paths.logsDirectory, `${appId}.log`), { force: true });
+  // The per-app environment store holds secrets; removal must not leave them
+  // on disk after the app is gone.
+  await rm(appEnvPath(paths.configDirectory, appId), { force: true });
 
   let containerWarning: string | undefined;
   const [executable, ...prefix] = app.composeCommand;
