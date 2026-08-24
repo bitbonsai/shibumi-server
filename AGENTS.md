@@ -66,6 +66,8 @@ Create and push matching `v${version}` Git tag at release commit before `npm pub
 - Docs Markdown output starts at `docs/`, so images and routes must remain portable between GitHub and `server.shibumistack.dev`.
 - `scripts/ship.ts` must match reviewed upstream client. Local edits trigger installer `owned changes`; publish upstream immutable version, then sync.
 - `oven/bun:1.4.0-slim` compressed layers are ~25 MiB (62%) larger than Alpine on ARM64 and AMD64. `slim` name does not mean smaller here.
+- The Ship client (`../shibumistack.dev/scripts/ship.ts`) talks to the server ONLY through `shis` subcommands over SSH (`shis image-load`, `client-config`, `webhook-secret`, `env`, ...). It never scps files or knows the app checkout path. Any new client capability = a new `shis` subcommand, not a file push.
+- Per-app secrets: `shis env set|list|rm <app-id>` stores `<config>/env/<app-id>.env` (0600); `set` reads KEY=VALUE from stdin (never argv). Injected at deploy via `composeOverride` in `deploy.ts` (merged into the service `environment:` block, values JSON.stringify'd = safe YAML scalar). Reserved `SHIBUMI_COMMIT`/`SHIBUMI_DEPLOYED_AT` win. Changing env needs a redeploy to apply. app-id is validated against the app-id grammar before it becomes a path.
 
 ## Public versus local
 
