@@ -72,3 +72,4 @@ Create and push matching `v${version}` Git tag at release commit before `npm pub
 ## Public versus local
 
 Public files use generic `myapp`/`example.com` examples. Do not add hostnames, usernames, real paths, ports, webhook URLs, or app inventory from a specific installation. Actual configuration belongs outside the checkout.
+- Source installs on a server (`git pull && bun src/cli.ts init`) are a NO-OP when `releases/<version>` already exists: init skips the copy for a known version. Same-version code changes need `rm -rf ~/.local/share/shibumi-server/releases/<version>` before init (safe while the service runs; init re-stages and swaps the `current` symlink). npm-flow updates always bump the version, so only source installs hit this.
