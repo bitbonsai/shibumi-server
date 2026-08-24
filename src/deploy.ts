@@ -434,6 +434,7 @@ async function restoreRelease(
   composeExecutable: string,
   compose: string[],
   options: CommandOptions,
+  appEnv: Record<string, string>,
   dependencies: DeployDependencies,
 ): Promise<void> {
   try {
@@ -447,7 +448,7 @@ async function restoreRelease(
       "restore",
       composeExecutable,
       [...compose, "up", "-d", "--no-build", "--force-recreate", app.service],
-      { ...options, input: composeOverride(app.service, release.imageName, release.metadata) },
+      { ...options, input: composeOverride(app.service, release.imageName, release.metadata, appEnv) },
     );
     await waitForHealth(app, dependencies);
   } catch (error) {
@@ -576,7 +577,7 @@ export async function rollbackToPreviousImage(
     await waitForHealth(app, dependencies);
     await dependencies.onOutput?.("health", retryBudgetSummary("Rollback healthy", Date.now() - replacementStartedAt));
   } catch (error) {
-    await restoreRelease(app, current, composeExecutable, compose, options, dependencies);
+    await restoreRelease(app, current, composeExecutable, compose, options, appEnv, dependencies);
     await dependencies.onOutput?.("restore", retryBudgetSummary("Previous release restored", Date.now() - replacementStartedAt));
     throw error;
   }
@@ -668,7 +669,7 @@ export async function deploy(
     await waitForHealth(app, dependencies);
     await dependencies.onOutput?.("health", retryBudgetSummary("Replacement healthy", Date.now() - replacementStartedAt));
   } catch (error) {
-    await restoreRelease(app, previous, composeExecutable, compose, options, dependencies);
+    await restoreRelease(app, previous, composeExecutable, compose, options, appEnv, dependencies);
     if (previous) await dependencies.onOutput?.("restore", retryBudgetSummary("Previous release restored", Date.now() - replacementStartedAt));
     throw error;
   }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { appEnvPath, mergeAppEnv, parseEnv, readAppEnv, serializeEnv, writeAppEnv } from "../src/app-env";
 
 describe("parseEnv", () => {
@@ -28,6 +28,11 @@ describe("mergeAppEnv", () => {
     expect(() => mergeAppEnv({}, { "bad-key": "x" })).toThrow("invalid environment variable name");
     expect(() => mergeAppEnv({}, { A: "line1\nline2" })).toThrow("newline");
   });
+
+  test("rejects reserved SHIBUMI_ deploy keys", () => {
+    expect(() => mergeAppEnv({}, { SHIBUMI_COMMIT: "spoof" })).toThrow("reserved");
+    expect(() => mergeAppEnv({}, { SHIBUMI_DEPLOYED_AT: "t" })).toThrow("reserved");
+  });
 });
 
 describe("read/write", () => {
@@ -41,6 +46,24 @@ describe("read/write", () => {
     expect(readFileSync(path, "utf8")).toBe("APP_ORIGIN=https://a.example\nRESEND_API_KEY=re_x\n");
     writeAppEnv(path, {});
     expect(readAppEnv(path)).toEqual({});
+  });
+
+  test("env directory is created 0700 and leaves no temp file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "appenv-"));
+    const path = appEnvPath(dir, "my-app");
+    writeAppEnv(path, { A: "1" });
+    expect(statSync(dirname(path)).mode & 0o777).toBe(0o700);
+    expect(existsSync(`${path}.tmp`)).toBe(false);
+  });
+
+  test("rewrite of a file with loosened permissions ends up 0600", () => {
+    const dir = mkdtempSync(join(tmpdir(), "appenv-"));
+    const path = appEnvPath(dir, "my-app");
+    writeAppEnv(path, { A: "1" });
+    chmodSync(path, 0o644);
+    writeAppEnv(path, { A: "2" });
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(readAppEnv(path)).toEqual({ A: "2" });
   });
 
   test("missing file reads as empty", () => {

@@ -200,8 +200,16 @@ try {
       else await present(keys.map((key) => ({ tone: "info" as const, message: key })), keys.length ? `${keys.length} variable(s)` : `No variables set for ${command.appId}`);
     } else if (command.action === "set") {
       const { parseEnv } = await import("./app-env");
-      const stdin = await Bun.stdin.text();
-      const incoming = parseEnv(stdin);
+      // Cap stdin so a runaway pipe over SSH cannot exhaust memory.
+      const limit = 1024 * 1024;
+      let size = 0;
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of Bun.stdin.stream()) {
+        size += chunk.length;
+        if (size > limit) throw new Error("env set input exceeds 1 MiB; pipe fewer variables at a time.");
+        chunks.push(chunk);
+      }
+      const incoming = parseEnv(Buffer.concat(chunks).toString("utf8"));
       if (Object.keys(incoming).length === 0) throw new Error("No KEY=VALUE lines on stdin.\n\nPipe values in, e.g. printf 'APP_ORIGIN=https://app.example.com\\n' | shis env set <app-id>.");
       writeAppEnv(path, mergeAppEnv(readAppEnv(path), incoming));
       console.log(`Set ${Object.keys(incoming).sort().join(", ")}. Redeploy to apply (bun ship, or shis redeploy).`);
