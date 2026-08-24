@@ -366,6 +366,21 @@ class FakeRunner implements CommandRunner {
   }
 }
 
+// Bun.spawn rejects rather than resolving with a non-zero exit code when the
+// executable itself is missing (e.g. no `sudo` on a minimal container or a
+// hardened deploy user's PATH). FakeRunner alone can't reproduce that.
+class RejectingRunner implements CommandRunner {
+  calls: string[][] = [];
+
+  constructor(private readonly rejectCommand: string, private readonly error: Error) {}
+
+  async run(command: string, args: string[], _options?: CommandOptions): Promise<CommandResult> {
+    this.calls.push([command, ...args]);
+    if (command === this.rejectCommand) throw this.error;
+    return { exitCode: 0, stdout: "", stderr: "" };
+  }
+}
+
 describe("Git checkout preparation", () => {
   test("accepts a matching existing checkout with Compose config", async () => {
     const root = await temporaryHome();
@@ -816,6 +831,32 @@ describe("PATH integration", () => {
     // with no explanation leaves the user guessing why the symlink failed.
     expect(outcome.detail).toContain("symlink skipped:");
     expect(outcome.detail).toContain(`${join(systemBinDirectory, "shis")} already exists and is not a shibumi-server symlink`);
+  });
+
+  test("degrades to the ~/.profile fallback instead of crashing when sudo is not on PATH", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const systemBinDirectory = join(await temporaryHome(), "not-writable-no-sudo-binary");
+    const runner = new RejectingRunner("sudo", new Error('Executable not found in $PATH: "sudo"'));
+
+    const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
+
+    expect(outcome.method).toBe("profile-appended");
+    expect(outcome.detail).toContain("symlink skipped:");
+    expect(outcome.detail).toContain("sudo");
+    const profile = await readFile(join(home, ".profile"), "utf8");
+    expect(profile).toContain(`export PATH="${result.paths.binDirectory}:$PATH"`);
+  });
+
+  test("degrades instead of crashing when an authorized sudo -v retry rejects", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const systemBinDirectory = join(await temporaryHome(), "not-writable-no-sudo-binary-2");
+    const runner = new RejectingRunner("sudo", new Error('Executable not found in $PATH: "sudo"'));
+
+    const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory, allowSudoPrompt: true }, runner);
+
+    expect(outcome.method).toBe("profile-appended");
   });
 
   test.skipIf(process.getuid?.() === 0)(

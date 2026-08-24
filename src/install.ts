@@ -297,6 +297,10 @@ async function symlinkLaunchers(
   ];
   if (await canWrite(systemBinDirectory)) {
     const created: CreatedLink[] = [];
+    const restoreLocally = async (link: string, priorTarget?: string) => {
+      await rm(link, { force: true });
+      if (priorTarget) await symlink(priorTarget, link);
+    };
     try {
       for (const [target, link] of links) {
         const managed = await isManagedLink(link, paths.binDirectory);
@@ -304,40 +308,54 @@ async function symlinkLaunchers(
           throw new Error(`${link} already exists and is not a shibumi-server symlink`);
         }
         const priorTarget = managed ? await readlink(link).catch(() => undefined) : undefined;
+        // Recorded before touching the filesystem: if symlink() below throws,
+        // the catch's rollback still needs this entry to restore a link that
+        // rm() already removed, not just the ones that fully succeeded.
+        created.push({ link, priorTarget });
         await rm(link, { force: true }).catch(() => {});
         await symlink(target, link);
-        created.push({ link, priorTarget });
       }
       return { ok: true };
     } catch (error) {
-      await rollbackLinks(created, async (link, priorTarget) => {
-        await rm(link, { force: true });
-        if (priorTarget) await symlink(priorTarget, link);
-      });
+      await rollbackLinks(created, restoreLocally);
       return { ok: false, reason: error instanceof Error ? error.message : String(error) };
     }
   }
   if (!tryPasswordlessSudo) return { ok: false };
   const created: CreatedLink[] = [];
-  for (const [target, link] of links) {
-    const priorTarget = (await isManagedLink(link, paths.binDirectory)) ? await readlink(link).catch(() => undefined) : undefined;
-    const result = await runner.run("sudo", ["-n", "ln", "-sf", target, link], { capture: true, timeoutMs: 10_000 });
-    if (result.exitCode !== 0) {
-      await rollbackLinks(created, async (createdLink, createdPriorTarget) => {
-        if (createdPriorTarget) await runner.run("sudo", ["-n", "ln", "-sf", createdPriorTarget, createdLink], { capture: true, timeoutMs: 10_000 });
-        else await runner.run("sudo", ["-n", "rm", "-f", createdLink], { capture: true, timeoutMs: 10_000 });
-      });
-      return { ok: false, reason: result.stderr.trim() || `sudo could not link ${link}` };
+  const restoreViaSudo = async (link: string, priorTarget?: string) => {
+    if (priorTarget) await runner.run("sudo", ["-n", "ln", "-sf", priorTarget, link], { capture: true, timeoutMs: 10_000 });
+    else await runner.run("sudo", ["-n", "rm", "-f", link], { capture: true, timeoutMs: 10_000 });
+  };
+  try {
+    for (const [target, link] of links) {
+      const priorTarget = (await isManagedLink(link, paths.binDirectory)) ? await readlink(link).catch(() => undefined) : undefined;
+      // Unlike the writable branch, `sudo -n` either runs `ln -sf` to
+      // completion or refuses to run it at all (no cached credential): there
+      // is no partial-mutation case for a link that never actually ran, so
+      // this is only recorded (and only needs rolling back) once it succeeds.
+      const result = await runner.run("sudo", ["-n", "ln", "-sf", target, link], { capture: true, timeoutMs: 10_000 });
+      if (result.exitCode !== 0) {
+        await rollbackLinks(created, restoreViaSudo);
+        return { ok: false, reason: result.stderr.trim() || `sudo could not link ${link}` };
+      }
+      created.push({ link, priorTarget });
     }
-    created.push({ link, priorTarget });
+    return { ok: true };
+  } catch (error) {
+    // sudo may not exist at all on a minimal host or a hardened deploy user's
+    // PATH: Bun.spawn rejects rather than returning a non-zero exit code, so
+    // this needs its own catch to degrade to the ~/.profile fallback instead
+    // of crashing shis init/shis setup outright.
+    await rollbackLinks(created, restoreViaSudo);
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
-  return { ok: true };
 }
 
 function profileDetail(outcome: "appended" | "existing", paths: InstallationPaths, systemBinDirectory: string, reason?: string): string {
   const lead = outcome === "existing" ? `${paths.binDirectory} is already on PATH via ~/.profile` : `${paths.binDirectory} added to ~/.profile`;
   const why = reason ? ` (symlink skipped: ${reason})` : "";
-  return `${lead}${why} — only takes effect for login shells, so some "ssh host shis ..." sessions still won't see it. For a fix that always works, run: sudo ln -sf ${paths.shortLauncher} ${systemBinDirectory}/shis`;
+  return `${lead}${why}, and only takes effect for login shells, so some "ssh host shis ..." sessions still won't see it. For a fix that always works, run: sudo ln -sf ${paths.shortLauncher} ${systemBinDirectory}/shis`;
 }
 
 async function appendProfilePath(home: string, binDirectory: string): Promise<"appended" | "existing"> {
@@ -395,7 +413,15 @@ export async function trySymlinkPath(
   runner: CommandRunner = new BunCommandRunner(),
 ): Promise<{ symlinked: boolean; systemBinDirectory: string; reason?: string }> {
   const systemBinDirectory = options.systemBinDirectory ?? DEFAULT_SYSTEM_BIN_DIRECTORY;
-  let outcome = await symlinkLaunchers(paths, systemBinDirectory, runner, true);
+  // symlinkLaunchers already catches its own risky calls (sudo may not be on
+  // PATH at all), but this stays defensive so a future change there can't
+  // turn a degraded PATH fix back into a crashed `shis init`/`shis setup`.
+  let outcome: SymlinkOutcome;
+  try {
+    outcome = await symlinkLaunchers(paths, systemBinDirectory, runner, true);
+  } catch (error) {
+    outcome = { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
   if (!outcome.ok && options.allowSudoPrompt) {
     try {
       const authorization = await runner.run("sudo", ["-v"], { capture: false, stdin: "inherit", timeoutMs: 120_000 });
@@ -425,7 +451,7 @@ export async function ensurePathIntegration(
   if (options.profileFallback === false) {
     return {
       method: "skipped",
-      detail: `${paths.binDirectory} may not be reachable from non-interactive SSH sessions${reason ? ` (${reason})` : ""}. Run shis init to retry, or symlink manually: sudo ln -sf ${paths.shortLauncher} ${systemBinDirectory}/shis`,
+      detail: `${paths.binDirectory} may not be reachable from non-interactive SSH sessions${reason ? ` (${reason})` : ""}. Rerun shis setup for a prompt, or symlink manually: sudo ln -sf ${paths.shortLauncher} ${systemBinDirectory}/shis`,
     };
   }
   return applyProfileFallback(home, paths, systemBinDirectory, reason);
