@@ -25,7 +25,7 @@ const SERVER_HOSTNAME = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 const COMMIT = /^[a-f0-9]{40}$/;
 const SERVER_CLI = "~/.local/bin/shibumi-server";
 const LATEST_SOURCE = "https://shibumistack.dev/ship/latest.ts";
-const CURRENT_SOURCE = "https://shibumistack.dev/ship/v44.ts";
+const CURRENT_SOURCE = "https://shibumistack.dev/ship/v45.ts";
 let sshControlDirectory: string | undefined;
 let sshControlTarget: string | undefined;
 
@@ -1795,11 +1795,22 @@ export async function runShip(): Promise<void> {
     const result = await setup(forceSetup);
     if (!result) return;
     const setupCommit = await offerSetupCommit(result.config);
-    if (forceSetup || result.changed || setupCommit === "declined") {
-      outro(setupCommit === "declined"
-        ? `${accent("Next:")} review and commit Shibumi setup files, then run bun ship.`
-        : `${accent("Next:")} bun ship`);
+    if (setupCommit === "declined") {
+      outro(`${accent("Next:")} review and commit Shibumi setup files, then run bun ship.`);
       return;
+    }
+    if (forceSetup || result.changed) {
+      // Setup succeeded with everything committed, so the first deploy is one
+      // Enter away. Offer it here instead of ending on "Next: bun ship".
+      // Only for direct-ship triggers in an interactive run: github-push
+      // deploys on push, and agent runs never reach setup.
+      const shipNow = result.config.trigger === "ship" && !agentRun && process.stdin.isTTY && process.stdout.isTTY
+        ? await confirm({ message: "Ship now?", initialValue: true })
+        : false;
+      if (shipNow !== true || isCancel(shipNow)) {
+        outro(`${accent("Next:")} ${result.config.trigger === "github-push" ? "git push deploys automatically" : "bun ship"}`);
+        return;
+      }
     }
     const compose = await localBuildFrontend(result.config);
     const estimateMs = await estimatedDeployDuration(result.config, result.target);
