@@ -285,6 +285,18 @@ interface SymlinkOutcome {
   reason?: string;
 }
 
+// Shared by both the writable and sudo branches: neither may touch a path
+// that already exists and isn't one of our own symlinks, whether or not the
+// caller has root. Throws so the caller's try/catch handles rollback of
+// whatever it already changed in earlier loop iterations.
+async function checkReplaceable(link: string, binDirectory: string): Promise<{ priorTarget?: string }> {
+  const managed = await isManagedLink(link, binDirectory);
+  if (await exists(link) && !managed) {
+    throw new Error(`${link} already exists and is not a shibumi-server symlink`);
+  }
+  return { priorTarget: managed ? await readlink(link).catch(() => undefined) : undefined };
+}
+
 async function symlinkLaunchers(
   paths: InstallationPaths,
   systemBinDirectory: string,
@@ -303,11 +315,7 @@ async function symlinkLaunchers(
     };
     try {
       for (const [target, link] of links) {
-        const managed = await isManagedLink(link, paths.binDirectory);
-        if (await exists(link) && !managed) {
-          throw new Error(`${link} already exists and is not a shibumi-server symlink`);
-        }
-        const priorTarget = managed ? await readlink(link).catch(() => undefined) : undefined;
+        const { priorTarget } = await checkReplaceable(link, paths.binDirectory);
         // Recorded before touching the filesystem: if symlink() below throws,
         // the catch's rollback still needs this entry to restore a link that
         // rm() already removed, not just the ones that fully succeeded.
@@ -329,17 +337,21 @@ async function symlinkLaunchers(
   };
   try {
     for (const [target, link] of links) {
-      const priorTarget = (await isManagedLink(link, paths.binDirectory)) ? await readlink(link).catch(() => undefined) : undefined;
-      // Unlike the writable branch, `sudo -n` either runs `ln -sf` to
-      // completion or refuses to run it at all (no cached credential): there
-      // is no partial-mutation case for a link that never actually ran, so
-      // this is only recorded (and only needs rolling back) once it succeeds.
+      const { priorTarget } = await checkReplaceable(link, paths.binDirectory);
+      // Recorded before the attempt, matching the writable branch: `ln -sf`
+      // over an existing target isn't guaranteed atomic either (it can
+      // unlink the old target before failing to create the new one, e.g. on
+      // ENOSPC or a read-only remount), so rollback needs this entry even
+      // for the link that's about to fail. Restoring a link that was never
+      // touched is a harmless no-op either way. The guard above already
+      // rules out touching a link this process didn't create, so this can
+      // never roll back something that was never ours.
+      created.push({ link, priorTarget });
       const result = await runner.run("sudo", ["-n", "ln", "-sf", target, link], { capture: true, timeoutMs: 10_000 });
       if (result.exitCode !== 0) {
         await rollbackLinks(created, restoreViaSudo);
         return { ok: false, reason: result.stderr.trim() || `sudo could not link ${link}` };
       }
-      created.push({ link, priorTarget });
     }
     return { ok: true };
   } catch (error) {

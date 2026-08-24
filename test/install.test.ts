@@ -782,9 +782,13 @@ describe("PATH integration", () => {
     const { result } = await initialized(home);
     const systemBinDirectory = join(await temporaryHome(), "not-writable-at-all");
     const runner = new FakeRunner();
+    // Each attempt now rolls back the just-failed link too (a harmless no-op
+    // restore), so a failed `sudo -n ln` is followed by a rollback call.
     runner.results = [
       { exitCode: 1, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
       { exitCode: 1, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
     ];
 
     await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
@@ -832,6 +836,37 @@ describe("PATH integration", () => {
     expect(outcome.detail).toContain("symlink skipped:");
     expect(outcome.detail).toContain(`${join(systemBinDirectory, "shis")} already exists and is not a shibumi-server symlink`);
   });
+
+  test.skipIf(process.getuid?.() === 0)(
+    "does not clobber a pre-existing foreign binary through the sudo branch either",
+    async () => {
+      // The foreign-binary guard used to live only in the writable branch:
+      // on a root-owned /usr/local/bin with a cached sudo credential, this
+      // exact scenario would silently replace someone else's `shis` via
+      // `sudo -n ln -sf`. Force the sudo path with a readable-but-not-
+      // directly-writable directory so this actually exercises that branch.
+      const home = await temporaryHome();
+      const { result } = await initialized(home);
+      const systemBinRoot = await temporaryHome();
+      const systemBinDirectory = join(systemBinRoot, "bin");
+      await mkdir(systemBinDirectory, { recursive: true });
+      await writeFile(join(systemBinDirectory, "shis"), "#!/bin/sh\necho not shibumi\n");
+      await chmod(systemBinDirectory, 0o555);
+      const runner = new FakeRunner();
+
+      try {
+        const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
+
+        expect(outcome.method).not.toBe("symlink");
+        expect(runner.calls).toEqual([]); // refused before ever invoking sudo
+        expect(await readFile(join(systemBinDirectory, "shis"), "utf8")).toBe("#!/bin/sh\necho not shibumi\n");
+        expect(outcome.detail).toContain("symlink skipped:");
+        expect(outcome.detail).toContain(`${join(systemBinDirectory, "shis")} already exists and is not a shibumi-server symlink`);
+      } finally {
+        await chmod(systemBinDirectory, 0o755);
+      }
+    },
+  );
 
   test("degrades to the ~/.profile fallback instead of crashing when sudo is not on PATH", async () => {
     const home = await temporaryHome();
@@ -881,6 +916,7 @@ describe("PATH integration", () => {
         { exitCode: 0, stdout: "", stderr: "" }, // sudo -n ln -sf for shis succeeds, replacing the prior link
         { exitCode: 1, stdout: "", stderr: "restart required" }, // sudo -n ln -sf for shibumi-server fails
         { exitCode: 0, stdout: "", stderr: "" }, // rollback: sudo -n ln -sf restores the prior target for shis
+        { exitCode: 0, stdout: "", stderr: "" }, // rollback: sudo -n rm -f cleans up shibumi-server (had no prior target)
       ];
 
       try {
@@ -891,6 +927,7 @@ describe("PATH integration", () => {
           ["sudo", "-n", "ln", "-sf", result.paths.shortLauncher, join(systemBinDirectory, "shis")],
           ["sudo", "-n", "ln", "-sf", result.paths.launcher, join(systemBinDirectory, "shibumi-server")],
           ["sudo", "-n", "ln", "-sf", priorTarget, join(systemBinDirectory, "shis")],
+          ["sudo", "-n", "rm", "-f", join(systemBinDirectory, "shibumi-server")],
         ]);
       } finally {
         await chmod(systemBinDirectory, 0o755);
@@ -921,6 +958,7 @@ describe("PATH integration", () => {
       { exitCode: 0, stdout: "", stderr: "" }, // sudo -n ln for shis succeeds
       { exitCode: 1, stdout: "", stderr: "" }, // sudo -n ln for shibumi-server fails
       { exitCode: 0, stdout: "", stderr: "" }, // rollback: sudo -n rm -f for shis
+      { exitCode: 0, stdout: "", stderr: "" }, // rollback: sudo -n rm -f for shibumi-server (never had a prior link either)
     ];
 
     const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
@@ -930,6 +968,7 @@ describe("PATH integration", () => {
       ["sudo", "-n", "ln", "-sf", result.paths.shortLauncher, join(systemBinDirectory, "shis")],
       ["sudo", "-n", "ln", "-sf", result.paths.launcher, join(systemBinDirectory, "shibumi-server")],
       ["sudo", "-n", "rm", "-f", join(systemBinDirectory, "shis")],
+      ["sudo", "-n", "rm", "-f", join(systemBinDirectory, "shibumi-server")],
     ]);
   });
 
@@ -966,15 +1005,16 @@ describe("PATH integration", () => {
     const runner = new FakeRunner();
     runner.results = [
       { exitCode: 1, stdout: "", stderr: "" }, // passwordless sudo -n for shis fails
+      { exitCode: 0, stdout: "", stderr: "" }, // rollback of that just-failed link (harmless no-op)
       { exitCode: 0, stdout: "", stderr: "" }, // sudo -v succeeds (password entered)
-      { exitCode: 0, stdout: "", stderr: "" }, // sudo -n ln for shis
-      { exitCode: 0, stdout: "", stderr: "" }, // sudo -n ln for shibumi-server
+      { exitCode: 0, stdout: "", stderr: "" }, // retry: sudo -n ln for shis
+      { exitCode: 0, stdout: "", stderr: "" }, // retry: sudo -n ln for shibumi-server
     ];
 
     const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory, allowSudoPrompt: true }, runner);
 
     expect(outcome.method).toBe("symlink");
-    expect(runner.calls[1]).toEqual(["sudo", "-v"]);
+    expect(runner.calls[2]).toEqual(["sudo", "-v"]);
   });
 });
 
