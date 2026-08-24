@@ -124,7 +124,17 @@ shis list
 shis remove example.com
 ```
 
-Removal deletes Shibumi config, secret, status, managed Caddy route, and app containers. It keeps the checkout, volumes, images, and GitHub webhook. Remove that webhook in GitHub when the domain no longer deploys from its repository. `--yes` skips Shibumi confirmation, not sudo. Removing the last app stops the service.
+Removal deletes Shibumi config, secret, status, managed Caddy route, per-app environment store, and app containers. It keeps the checkout, volumes, images, and GitHub webhook. Remove that webhook in GitHub when the domain no longer deploys from its repository. `--yes` skips Shibumi confirmation, not sudo. Removing the last app stops the service.
+
+Set per-app environment values and secrets, injected into the container at each deploy:
+
+```bash
+printf 'RESEND_API_KEY=re_xxx\n' | shis env set example-com
+shis env list example-com
+shis env rm example-com OLD_KEY
+```
+
+Values arrive on stdin and live in one mode-`0600` file per app; `list` prints names only. Projects manage the same store remotely with `bun ship:env`. Details: [Environment and secrets](https://server.shibumistack.dev/docs/app-env).
 
 Uninstall the service, launcher, and installed releases:
 
