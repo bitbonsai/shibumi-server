@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { createServer } from "node:net";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { loadConfig } from "./config";
 import { BunCommandRunner, DeploymentError, defaultDeployDependencies, deploy, rollbackToPreviousImage, type CommandRunner } from "./deploy";
 import { DeploymentHistoryStore } from "./history";
@@ -12,7 +12,7 @@ import { DeploymentStatusStore } from "./status";
 import { checkDomainDns, detectPublicAddresses } from "./domain";
 import { APP_RETRY_BUDGET_MS, detectCaddySite, type CaddySiteOptions, type Compression, type HeaderProfile, type Indexing } from "./caddy";
 import { applyCaddyWithSudo, authorizeCaddySudo, type CaddyApplyRequest } from "./caddy-sudo";
-import { addApp, appIdForDomain, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, type AddAppOptions } from "./install";
+import { addApp, appIdForDomain, ensurePathIntegration, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, setAppRepository, type AddAppOptions, type CheckoutMismatch } from "./install";
 import { parseGitHubRepositoryTarget } from "./repository";
 import { brand, command, next, SHIP_INSTALL_COMMAND } from "./terminal-ui";
 
@@ -270,6 +270,16 @@ export async function promptForApp(initial: Partial<SetupAnswers> = {}, home = h
   };
 }
 
+export async function confirmCheckoutReplacement(mismatch: CheckoutMismatch, yes = false): Promise<boolean> {
+  log.warn(`Checkout ${mismatch.checkout} has origin that does not match ${mismatch.repository}`);
+  if (yes) return true;
+  const accepted = await confirm({
+    message: `Move it to ${basename(mismatch.backup)} and clone ${mismatch.repository}?`,
+    initialValue: false,
+  });
+  return !cancelled(accepted) && accepted;
+}
+
 export async function confirmUninstall(purge: boolean): Promise<boolean> {
   const accepted = await confirm({
     message: purge
@@ -433,8 +443,20 @@ export async function runInteractiveSetup(options: {
     throw error;
   }
 
+  let pathIntegration = await ensurePathIntegration(options.home, installation.paths);
+  if (pathIntegration.method !== "symlink") {
+    const trySudo = await confirm({
+      message: "Symlink shis into /usr/local/bin so non-interactive SSH sessions find it? sudo will ask for your password directly.",
+      initialValue: true,
+    });
+    if (!cancelled(trySudo) && trySudo) {
+      pathIntegration = await ensurePathIntegration(options.home, installation.paths, { allowSudoPrompt: true });
+    }
+  }
+
   outro([
     `Launcher: ${installation.paths.shortLauncher}`,
+    `PATH: ${pathIntegration.detail}`,
     "The service starts after its first app is added.",
     "From your local project root:",
     SHIP_INSTALL_COMMAND,
@@ -520,19 +542,17 @@ export async function runRemoveApp(home: string, selector: string, yes = false):
     throw new Error(`${error instanceof Error ? error.message : String(error)}\n\nNext: rerun shis remove ${app.appId}; Caddy removal is idempotent.`);
   }
   log.success(`${app.domain} removed from shibumi-server`);
-  log.info([
-    `Caddy       ${app.caddyMode ? "Shibumi route removed" : "unchanged (unmanaged)"}`,
-    `Checkout    preserved at ${app.checkout}`,
-    "Volumes     preserved",
-    "Images      preserved",
-    "GitHub      webhook preserved",
-  ].join("\n"));
+  log.info(`Caddy       ${app.caddyMode ? "Shibumi route removed" : "unchanged (unmanaged)"}\nGitHub      webhook preserved`);
   if (result.containerWarning) {
     log.warn(`App container could not be stopped: ${result.containerWarning}\nNext: stop its Compose project manually from ${app.checkout}.`);
   }
-  outro(result.remainingApps === 0
-    ? "No apps remain. shibumi-server service stopped."
-    : `${result.remainingApps} app${result.remainingApps === 1 ? "" : "s"} remain. shibumi-server restarted.`);
+  outro([
+    `Kept: checkout ${app.checkout}, volumes, images`,
+    "Re-adding under a different repo? Delete the checkout first.",
+    result.remainingApps === 0
+      ? "No apps remain. shibumi-server service stopped."
+      : `${result.remainingApps} app${result.remainingApps === 1 ? "" : "s"} remain. shibumi-server restarted.`,
+  ].join("\n"));
 }
 
 export async function runRollback(home: string, appId: string, yes = false): Promise<void> {
@@ -761,17 +781,35 @@ export async function runInteractiveAdd(options: { home: string; yes?: boolean }
 
   const action = answers.dryRun ? "preview" : "add";
   const progress = spinner();
-  progress.start(`${answers.dryRun ? "Previewing" : "Adding"} ${answers.domain}`);
+  let spinnerActive = false;
+  const startProgress = () => {
+    progress.start(`${answers.dryRun ? "Previewing" : "Adding"} ${answers.domain}`);
+    spinnerActive = true;
+  };
+  // The spinner and an interactive confirm cannot render at once; pause it for
+  // the checkout-replacement question, then resume only if the user accepts.
+  const checkouts = new GitCheckoutManager(new BunCommandRunner(), async (mismatch) => {
+    if (spinnerActive) {
+      progress.stop(`Checkout ${basename(mismatch.checkout)} needs attention`);
+      spinnerActive = false;
+    }
+    const proceed = await confirmCheckoutReplacement(mismatch, yes);
+    if (proceed) startProgress();
+    return proceed;
+  });
+  startProgress();
   let app;
   try {
     app = await addApp({
       home,
       ...answers,
       caddyMode: existingCaddyMode ?? (caddy?.mode === "preserve" ? "preserve" : "managed"),
-    });
+    }, undefined, checkouts);
     progress.stop(`${answers.dryRun ? "Previewed" : existingCaddyMode ? "Already configured" : "Added"} ${answers.domain}`);
+    spinnerActive = false;
   } catch (error) {
-    progress.error(`Failed to ${action} ${answers.domain}`);
+    if (spinnerActive) progress.error(`Failed to ${action} ${answers.domain}`);
+    else log.error(`Failed to ${action} ${answers.domain}`);
     throw error;
   }
 
@@ -800,4 +838,44 @@ export async function runInteractiveAdd(options: { home: string; yes?: boolean }
       : caddy?.mode === "preserve" ? "existing upstream preserved" : "configured and reloaded",
   }));
   outro(registrationOutcome());
+}
+
+export async function runSetRepository(
+  home: string,
+  selector: string,
+  repository: string,
+  ref: string | undefined,
+  yes = false,
+): Promise<void> {
+  intro(brand());
+  const app = (await registeredApps(home)).find((item) => item.appId === selector || item.domain === selector);
+  if (!app) throw new Error(`unknown app: ${selector}.\n\nNext: run shis list and choose a domain or app ID.`);
+  const backup = `${app.checkout}.bak`;
+  log.info([
+    `App         ${app.domain} (${app.appId})`,
+    `Repository  github:${app.repository} -> github:${repository}`,
+    `Checkout    ${app.checkout} moves to ${backup}; fresh clone from github:${repository}`,
+  ].join("\n"));
+  if (!yes) {
+    const accepted = await confirm({
+      message: `Repoint ${app.appId}? Old checkout moves to .bak, fresh clone.`,
+      initialValue: false,
+    });
+    if (cancelled(accepted) || !accepted) {
+      cancel("set-repository cancelled.");
+      return;
+    }
+  }
+
+  const progress = spinner();
+  progress.start(`Cloning github:${repository}`);
+  let result;
+  try {
+    result = await setAppRepository(home, app.appId, repository, ref);
+    progress.stop(`Repository updated for ${app.domain}`);
+  } catch (error) {
+    progress.error(`Could not repoint ${app.domain}`);
+    throw error;
+  }
+  outro(`Repository updated. Next deploy ships from github:${result.repository}.`);
 }

@@ -45,7 +45,17 @@ User-run commands check npm with a short timeout and suggest an update when a ne
 shis remove example.com
 ```
 
-Removes Shibumi config, webhook secret, deployment status, history, managed Caddy route, and app containers. Keeps checkout, volumes, images, and GitHub webhook. `--yes` skips confirmation; sudo still asks separately.
+Removes Shibumi config, webhook secret, deployment status, history, managed Caddy route, and app containers. Keeps checkout, volumes, images, and GitHub webhook, and the outro states exactly what stayed. `--yes` skips confirmation; sudo still asks separately. Re-registering the same domain under a different repository reuses that checkout, so delete it first if you mean to start clean; use [`shis set-repository`](#repoint-an-apps-repository) when you don't.
+
+## Repoint an app's repository
+
+```sh
+shis set-repository example.com github:owner/new-repository
+```
+
+Moves the app's existing checkout to `<checkout>.bak`, clones the new repository in its place, and updates the registration, all without touching Caddy or re-registering the app. Confirms first; `--yes` skips the prompt. Refuses only when `<checkout>.bak` already exists, since that's the one case Shibumi won't overwrite silently.
+
+`shis add` offers the same move when it finds an existing checkout whose Git origin doesn't match the repository you're adding.
 
 ## Uninstall
 

@@ -5,6 +5,7 @@ export type CliCommand =
   | { name: "version" }
   | { name: "setup" | "update" | "list" }
   | { name: "remove"; app: string; yes: boolean }
+  | { name: "set-repository"; app: string; repository: string; ref?: string; yes: boolean }
   | { name: "check" | "serve"; config: string }
   | { name: "client-config"; appId: string; serverHostname?: string }
   | { name: "webhook-secret" | "caddy-cutover" | "caddy-refresh" | "enable-prebuilt"; appId: string }
@@ -77,6 +78,9 @@ ${heading("APPS")}
     ${command("--port <port> [--dry-run] [options] \\")}
     ${command("[-- <test-command...>]")}
       Add or preview an app with explicit settings
+
+  ${command("shis set-repository <domain|app-id> <repository>")} [--yes]
+      Repoint an app's repository; old checkout moves to .bak, fresh clone
 
 ${heading("OPERATIONS")}
   ${command("shis status <app-id>")} [--commit <sha>] [--json]
@@ -162,6 +166,19 @@ export function parseCliArgs(argv: string[]): CliCommand {
     const unknown = args.find((arg) => arg !== "--yes");
     if (unknown) fail(`unknown option: ${unknown}`);
     return { name, app, yes: flags.has("--yes") };
+  }
+  if (name === "set-repository") {
+    const app = args.shift();
+    const repositoryValue = args.shift();
+    if (!app || app.startsWith("--")) fail("set-repository requires a domain or app id");
+    if (!repositoryValue || repositoryValue.startsWith("--")) fail("set-repository requires a repository");
+    const target = parseGitHubRepositoryTarget(repositoryValue);
+    if (!target) fail("set-repository repository must use github:owner/repo or a GitHub repository URL");
+    const flags = new Set(args);
+    if (flags.size !== args.length) fail("set-repository flags may only be used once");
+    const unknown = args.find((arg) => arg !== "--yes");
+    if (unknown) fail(`unknown option: ${unknown}`);
+    return { name, app, repository: target.repository, ref: target.ref, yes: flags.has("--yes") };
   }
   if (name === "uninstall") {
     const flags = new Set(args);

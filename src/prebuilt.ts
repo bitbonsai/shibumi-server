@@ -60,7 +60,11 @@ export async function inspectPrebuiltImageMetadata(
   const labels = details.Labels as Record<string, unknown>;
   if (labels[APP_LABEL] !== appId) throw new Error("prebuilt image app identity does not match");
   if (labels[REVISION_LABEL] !== commit) throw new Error("prebuilt image revision does not match commit");
-  if (labels[SOURCE_LABEL] !== `https://github.com/${repository}`) throw new Error("prebuilt image source does not match repository");
+  if (labels[SOURCE_LABEL] !== `https://github.com/${repository}`) {
+    const source = typeof labels[SOURCE_LABEL] === "string" ? labels[SOURCE_LABEL] : undefined;
+    const actualRepository = source?.startsWith("https://github.com/") ? source.slice("https://github.com/".length) : undefined;
+    throw new Error(`prebuilt image source does not match repository.\n\nNext: if ${appId} should track ${actualRepository ?? "the built image's repository"} instead, run: ssh <host> shis set-repository ${appId} ${actualRepository ? `github:${actualRepository}` : "<repository>"}`);
+  }
   if (typeof labels[TREE_LABEL] !== "string" || !COMMIT.test(labels[TREE_LABEL])) throw new Error("prebuilt image source tree is invalid");
   if (tree && labels[TREE_LABEL] !== tree) throw new Error("prebuilt image source tree does not match commit");
   return { image, revision: labels[REVISION_LABEL] as string };

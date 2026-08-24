@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
-import { checkAppHealth, defaultCheckout, findCommand, formatReadySummary, mergeSetupAnswers, nextAvailablePort, registrationOutcome, resolveComposeCommand, setupRequirementIssues } from "../src/setup";
+import { checkAppHealth, confirmCheckoutReplacement, defaultCheckout, findCommand, formatReadySummary, mergeSetupAnswers, nextAvailablePort, registrationOutcome, resolveComposeCommand, setupRequirementIssues } from "../src/setup";
 
 class RequirementRunner implements CommandRunner {
   constructor(
@@ -115,6 +115,14 @@ describe("interactive setup", () => {
     ].join("\n"));
     expect(summary).not.toContain("<ssh-host>");
     expect(summary).not.toContain("secrets.env");
+  });
+
+  test("skips the checkout-replacement prompt with --yes", async () => {
+    expect(await confirmCheckoutReplacement({
+      checkout: "/home/user/shibumi/example-com",
+      backup: "/home/user/shibumi/example-com.bak",
+      repository: "owner/repo",
+    }, true)).toBe(true);
   });
 
   test("assigns the first unassigned and locally available port", async () => {

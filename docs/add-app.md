@@ -34,6 +34,8 @@ Run those commands as the same user that runs `shibumi-server`. A read-only SSH 
 
 If Caddy already serves the domain, Shibumi leaves that upstream in place. It adds only the webhook route. You choose when to switch traffic after the first healthy deploy.
 
+If the checkout path already exists but its Git origin points at a different repository, `add` offers to move it to `<checkout>.bak` and clone the requested repository fresh, instead of failing outright. `--yes` accepts that automatically; the offer is refused only when `<checkout>.bak` already exists. To repoint an already-registered app the same way without going through `add` again, use [`shis set-repository`](/docs/operations#repoint-an-apps-repository).
+
 ## Automation
 
 ```sh

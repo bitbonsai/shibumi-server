@@ -97,6 +97,8 @@ The installer checks the host before writing anything. It finds a working Compos
 
 The docs use `shis`. Existing scripts can keep using `shibumi-server`.
 
+`~/.local/bin` alone isn't enough for non-interactive access: `ssh host shis ...` often runs without a login shell, so it never picks up `~/.local/bin` from `~/.profile` or `~/.bashrc`. Setup also tries to symlink both commands into `/usr/local/bin`, asking sudo for a password only if that directory isn't already writable. When sudo isn't available, it appends `~/.local/bin` to `~/.profile` instead and says so plainly: that fallback only helps sessions the remote shell treats as a login shell, so some non-interactive `ssh host shis ...` calls still won't find it. Run the printed `sudo ln -sf` command yourself for a fix that always works.
+
 ## Files on the server
 
 ```text

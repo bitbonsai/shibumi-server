@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
-import { loadPrebuiltImage, serverPlatform, uploadedImage } from "../src/prebuilt";
+import { inspectPrebuiltImageMetadata, loadPrebuiltImage, serverPlatform, uploadedImage } from "../src/prebuilt";
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
@@ -107,6 +107,32 @@ describe("prebuilt images", () => {
       runner,
     )).rejects.toThrow("free disk");
     expect(runner.calls).toHaveLength(0);
+  });
+
+  test("points a mismatched image source at set-repository with the built repository", async () => {
+    const runner = new FakeRunner();
+    runner.run = async (command, args, options) => {
+      runner.calls.push({ command, args, options });
+      if (args[0] === "image" && args[1] === "inspect") return {
+        exitCode: 0,
+        stdout: JSON.stringify([{
+          Os: "linux",
+          Architecture: process.arch === "arm64" ? "arm64" : "amd64",
+          RepoTags: [args[2]],
+          Labels: {
+            "dev.shibumistack.app-id": "myapp",
+            "org.opencontainers.image.revision": "a".repeat(40),
+            "org.opencontainers.image.source": "https://github.com/other/repository",
+            "dev.shibumistack.source-tree": "b".repeat(40),
+          },
+        }]),
+        stderr: "",
+      };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    await expect(inspectPrebuiltImageMetadata(runner, "myapp", "a".repeat(40), "owner/repo"))
+      .rejects.toThrow("shis set-repository myapp github:other/repository");
   });
 
   test("maps supported server architectures to Linux image platforms", () => {

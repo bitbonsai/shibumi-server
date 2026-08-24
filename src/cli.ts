@@ -7,7 +7,7 @@ import packageJson from "../package.json";
 import { createClientConfig, readWebhookSecret } from "./client-config";
 import { formatHelp, parseCliArgs } from "./cli-args";
 import { loadConfig, validateSecrets } from "./config";
-import { addApp, enablePrebuiltApp, initializeInstallation, installationPaths, setDeploymentMode, uninstallInstallation } from "./install";
+import { addApp, ensurePathIntegration, GitCheckoutManager, enablePrebuiltApp, initializeInstallation, installationPaths, setDeploymentMode, uninstallInstallation } from "./install";
 import { WebhookService } from "./server";
 import { DeploymentStatusStore } from "./status";
 import { DeploymentHistoryStore } from "./history";
@@ -132,10 +132,13 @@ try {
       packageRoot: resolve(import.meta.dir, ".."),
       bunExecutable: process.execPath,
     });
+    // Best effort, no password prompt: automation should never hang waiting on sudo.
+    const pathIntegration = await ensurePathIntegration(homedir(), result.paths);
     if (process.env.SHIBUMI_QUIET_INIT !== "1") await present([
       { tone: "success", message: `Installed shibumi-server ${result.version}` },
       { tone: "info", message: `Release ${result.paths.currentRelease}` },
       { tone: "info", message: `Launcher ${result.paths.shortLauncher}` },
+      { tone: "info", message: `PATH ${pathIntegration.detail}` },
     ], `Next: from your local project root, run:\n${SHIP_INSTALL_COMMAND}`);
   } else if (command.name === "uninstall") {
     requireLinux();
@@ -163,6 +166,10 @@ try {
     requireLinux();
     const { runRemoveApp } = await import("./setup");
     await runRemoveApp(homedir(), command.app, command.yes);
+  } else if (command.name === "set-repository") {
+    requireLinux();
+    const { runSetRepository } = await import("./setup");
+    await runSetRepository(homedir(), command.app, command.repository, command.ref, command.yes);
   } else if (command.name === "enable-prebuilt") {
     requireLinux();
     await enablePrebuiltApp(homedir(), command.appId);
@@ -256,15 +263,16 @@ try {
     requireLinux();
     const { name: _, yes, ...options } = command;
     if (options.repository && options.checkout && options.hostPort !== undefined) {
-      const { resolveComposeCommand } = await import("./setup");
+      const { resolveComposeCommand, confirmCheckoutReplacement } = await import("./setup");
       options.composeCommand = await resolveComposeCommand(options.composeCommand);
+      const checkouts = new GitCheckoutManager(new BunCommandRunner(), (mismatch) => confirmCheckoutReplacement(mismatch, yes));
       const result = await addApp({
         home: homedir(),
         ...options,
         repository: options.repository,
         checkout: options.checkout,
         hostPort: options.hostPort,
-      });
+      }, undefined, checkouts);
       const paths = installationPaths(homedir());
       if (options.dryRun) await present([
         { tone: "info", message: `App ID ${result.appId}` },

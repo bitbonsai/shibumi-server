@@ -8,6 +8,7 @@ describe("CLI arguments", () => {
     expect(formatHelp(true)).toContain("\x1b[38;5;208m渋み");
     expect(formatHelp()).toContain("shis list");
     expect(formatHelp()).toContain("shis remove <domain|app-id>");
+    expect(formatHelp()).toContain("shis set-repository <domain|app-id> <repository>");
     expect(formatHelp()).toContain("shis caddy-refresh <app-id>");
   });
 
@@ -26,6 +27,18 @@ describe("CLI arguments", () => {
   test("parses app removal", () => {
     expect(parseCliArgs(["remove", "example.com"])).toEqual({ name: "remove", app: "example.com", yes: false });
     expect(parseCliArgs(["remove", "example-com", "--yes"])).toEqual({ name: "remove", app: "example-com", yes: true });
+  });
+
+  test("parses repository repointing", () => {
+    expect(parseCliArgs(["set-repository", "example.com", "github:owner/repo"])).toEqual({
+      name: "set-repository", app: "example.com", repository: "owner/repo", ref: undefined, yes: false,
+    });
+    expect(parseCliArgs(["set-repository", "example-com", "https://github.com/owner/repo", "--yes"])).toEqual({
+      name: "set-repository", app: "example-com", repository: "owner/repo", ref: undefined, yes: true,
+    });
+    expect(parseCliArgs(["set-repository", "example-com", "https://github.com/owner/repo/tree/shibumi"])).toEqual({
+      name: "set-repository", app: "example-com", repository: "owner/repo", ref: "refs/heads/shibumi", yes: false,
+    });
   });
 
   test("parses uninstall modes", () => {
@@ -164,6 +177,10 @@ describe("CLI arguments", () => {
     expect(() => parseCliArgs(["list", "extra"])).toThrow("does not accept");
     expect(() => parseCliArgs(["remove"])).toThrow("domain or app id");
     expect(() => parseCliArgs(["remove", "example.com", "--purge"])).toThrow("unknown option");
+    expect(() => parseCliArgs(["set-repository"])).toThrow("domain or app id");
+    expect(() => parseCliArgs(["set-repository", "example.com"])).toThrow("requires a repository");
+    expect(() => parseCliArgs(["set-repository", "example.com", "not-a-repository"])).toThrow("github:owner/repo");
+    expect(() => parseCliArgs(["set-repository", "example.com", "github:owner/repo", "--purge"])).toThrow("unknown option");
     expect(() => parseCliArgs(["uninstall", "--purge", "--purge"])).toThrow("only be used once");
     expect(() => parseCliArgs(["check"])).toThrow("--config");
     expect(() => parseCliArgs(["client-config"])).toThrow("app id");

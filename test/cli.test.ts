@@ -26,6 +26,7 @@ test("CLI help documents interactive installation, pinned installation, and app 
   expect(result.stdout).toContain("shis update");
   expect(result.stdout).toContain("shis uninstall");
   expect(result.stdout).toContain("shis add <domain>");
+  expect(result.stdout).toContain("shis set-repository <domain|app-id> <repository>");
   expect(result.stdout).toContain("--dry-run");
   expect(result.stdout).toContain("client-config");
   expect(result.stdout).toContain("status <app-id>");

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { addApp, appIdForDomain, enablePrebuiltApp, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, setDeploymentMode, SystemdUserServiceManager, uninstallInstallation, type CheckoutManager, type ServiceManager } from "../src/install";
+import { addApp, appIdForDomain, enablePrebuiltApp, ensurePathIntegration, GitCheckoutManager, initializeInstallation, installationPaths, markCaddyManaged, registeredApps, removeApp, setAppRepository, setDeploymentMode, SystemdUserServiceManager, uninstallInstallation, type CheckoutManager, type ServiceManager } from "../src/install";
 import packageJson from "../package.json";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
 
@@ -459,6 +459,236 @@ describe("Git checkout preparation", () => {
       checkout,
       composeFile: "compose.yaml",
     })).rejects.toThrow("does not match");
+  });
+
+  test("offers to move a mismatched checkout to .bak and clone fresh when a replacement is confirmed", async () => {
+    const root = await temporaryHome();
+    const checkout = join(root, "app");
+    await mkdir(checkout, { recursive: true });
+    await writeFile(join(checkout, "marker.txt"), "original checkout\n");
+    const sha = "a".repeat(40);
+    const runner = new FakeRunner();
+    runner.results = [
+      { exitCode: 0, stdout: "https://github.com/other/repository.git\n", stderr: "" }, // mismatched origin
+      { exitCode: 0, stdout: "", stderr: "" }, // clone
+      { exitCode: 0, stdout: "https://github.com/owner/repository.git\n", stderr: "" }, // matching origin after clone
+      { exitCode: 0, stdout: `${sha}\trefs/heads/main\n`, stderr: "" }, // ls-remote
+      { exitCode: 0, stdout: "compose.yaml\n", stderr: "" }, // ls-files
+    ];
+    const seen: Array<{ checkout: string; backup: string; repository: string }> = [];
+    const confirmReplacement = async (mismatch: { checkout: string; backup: string; repository: string }) => {
+      seen.push(mismatch);
+      return true;
+    };
+
+    const composeFile = await new GitCheckoutManager(runner, confirmReplacement).prepare({
+      repository: "owner/repository",
+      checkout,
+    });
+
+    expect(composeFile).toBe("compose.yaml");
+    expect(seen).toEqual([{ checkout, backup: `${checkout}.bak`, repository: "owner/repository" }]);
+    expect(await readFile(join(`${checkout}.bak`, "marker.txt"), "utf8")).toBe("original checkout\n");
+    expect(runner.calls[1]).toEqual([
+      "git", "clone", "--branch", "main", "--single-branch", "https://github.com/owner/repository.git", checkout,
+    ]);
+  });
+
+  test("declines the replacement when the confirmation is rejected, preserving the checkout", async () => {
+    const root = await temporaryHome();
+    const checkout = join(root, "app");
+    await mkdir(checkout, { recursive: true });
+    const runner = new FakeRunner();
+    runner.results = [{ exitCode: 0, stdout: "https://github.com/other/repository.git\n", stderr: "" }];
+
+    await expect(new GitCheckoutManager(runner, async () => false).prepare({
+      repository: "owner/repository",
+      checkout,
+    })).rejects.toThrow("does not match");
+
+    expect(await stat(checkout).then(() => true)).toBe(true);
+    expect(await stat(`${checkout}.bak`).then(() => true, () => false)).toBe(false);
+  });
+
+  test("refuses to replace a mismatched checkout when the .bak destination already exists", async () => {
+    const root = await temporaryHome();
+    const checkout = join(root, "app");
+    const backup = `${checkout}.bak`;
+    await mkdir(checkout, { recursive: true });
+    await mkdir(backup, { recursive: true });
+    const runner = new FakeRunner();
+    runner.results = [{ exitCode: 0, stdout: "https://github.com/other/repository.git\n", stderr: "" }];
+    let confirmed = false;
+    const confirmReplacement = async () => {
+      confirmed = true;
+      return true;
+    };
+
+    await expect(new GitCheckoutManager(runner, confirmReplacement).prepare({
+      repository: "owner/repository",
+      checkout,
+    })).rejects.toThrow(`${backup} already exists`);
+    expect(confirmed).toBe(false);
+  });
+});
+
+describe("app repository repointing", () => {
+  test("moves the checkout to .bak, clones the new repository, and updates config", async () => {
+    const home = await temporaryHome();
+    const { services } = await initialized(home);
+    const root = await temporaryHome();
+    const originalCheckout = join(root, "example-com");
+    await mkdir(originalCheckout, { recursive: true });
+    await addApp(appOptions(home, { checkout: originalCheckout }), services, checkouts);
+    const paths = installationPaths(home);
+    const cloneInto: CheckoutManager = {
+      async prepare(options) {
+        expect(options.repository).toBe("owner/new-repository");
+        expect(options.checkout).toBe(originalCheckout);
+        return "compose.yaml";
+      },
+    };
+
+    const result = await setAppRepository(home, "example-com", "owner/new-repository", undefined, services, cloneInto);
+
+    expect(result).toEqual({
+      appId: "example-com",
+      domain: "example.com",
+      checkout: originalCheckout,
+      backup: `${originalCheckout}.bak`,
+      repository: "owner/new-repository",
+      ref: "refs/heads/main",
+    });
+    const config = JSON.parse(await readFile(paths.config, "utf8"));
+    expect(config.apps["example-com"].repository).toBe("owner/new-repository");
+    expect(config.apps["example-com"].checkout).toBe(originalCheckout);
+    expect(services.restarts).toBe(2);
+  });
+
+  test("reverts the checkout rename when the fresh clone fails", async () => {
+    const home = await temporaryHome();
+    const { services } = await initialized(home);
+    const root = await temporaryHome();
+    const checkout = join(root, "example-com");
+    await mkdir(checkout, { recursive: true });
+    await writeFile(join(checkout, "marker.txt"), "kept\n");
+    await addApp(appOptions(home, { checkout }), services, checkouts);
+    const failingClone: CheckoutManager = { async prepare() { throw new Error("cannot clone owner/new-repository"); } };
+
+    await expect(setAppRepository(home, "example-com", "owner/new-repository", undefined, services, failingClone))
+      .rejects.toThrow("cannot clone");
+
+    expect(await readFile(join(checkout, "marker.txt"), "utf8")).toBe("kept\n");
+    const config = JSON.parse(await readFile(installationPaths(home).config, "utf8"));
+    expect(config.apps["example-com"].repository).toBe("owner/repository");
+  });
+
+  test("refuses to repoint when the .bak destination already exists", async () => {
+    const home = await temporaryHome();
+    const { services } = await initialized(home);
+    const root = await temporaryHome();
+    const checkout = join(root, "example-com");
+    await mkdir(checkout, { recursive: true });
+    await mkdir(`${checkout}.bak`, { recursive: true });
+    await addApp(appOptions(home, { checkout }), services, checkouts);
+
+    await expect(setAppRepository(home, "example-com", "owner/new-repository", undefined, services, checkouts))
+      .rejects.toThrow("already exists");
+  });
+
+  test("rejects an unknown app selector", async () => {
+    const home = await temporaryHome();
+    await initialized(home);
+
+    await expect(setAppRepository(home, "missing", "owner/new-repository", undefined)).rejects.toThrow("unknown app");
+  });
+});
+
+describe("PATH integration", () => {
+  test("symlinks the launchers into a writable system bin directory", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const systemBinDirectory = join(await temporaryHome(), "usr-local-bin");
+    await mkdir(systemBinDirectory, { recursive: true });
+    const runner = new FakeRunner();
+
+    const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
+
+    expect(outcome.method).toBe("symlink");
+    expect(await readFile(join(systemBinDirectory, "shis"), "utf8")).toBe(await readFile(result.paths.shortLauncher, "utf8"));
+    expect(await readFile(join(systemBinDirectory, "shibumi-server"), "utf8")).toBe(await readFile(result.paths.launcher, "utf8"));
+    expect(runner.calls).toEqual([]);
+  });
+
+  test("falls back to passwordless sudo when the system bin directory is not directly writable", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const systemBinDirectory = join(await temporaryHome(), "not-writable-directly");
+    const runner = new FakeRunner();
+    runner.results = [
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+    ];
+
+    const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
+
+    expect(outcome.method).toBe("symlink");
+    expect(runner.calls).toEqual([
+      ["sudo", "-n", "ln", "-sf", result.paths.shortLauncher, join(systemBinDirectory, "shis")],
+      ["sudo", "-n", "ln", "-sf", result.paths.launcher, join(systemBinDirectory, "shibumi-server")],
+    ]);
+  });
+
+  test("falls back to ~/.profile, with an honest caveat, when sudo is unavailable", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const systemBinDirectory = join(await temporaryHome(), "not-writable-at-all");
+    const runner = new FakeRunner();
+    runner.results = [{ exitCode: 1, stdout: "", stderr: "sudo: a password is required" }];
+
+    const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
+
+    expect(outcome.method).toBe("profile-appended");
+    expect(outcome.detail).toContain("only takes effect for login shells");
+    expect(outcome.detail).toContain(`sudo ln -sf ${result.paths.shortLauncher} ${systemBinDirectory}/shis`);
+    const profile = await readFile(join(home, ".profile"), "utf8");
+    expect(profile).toContain(`export PATH="${result.paths.binDirectory}:$PATH"`);
+  });
+
+  test("does not duplicate the ~/.profile entry on a second run", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const systemBinDirectory = join(await temporaryHome(), "not-writable-at-all");
+    const runner = new FakeRunner();
+    runner.results = [
+      { exitCode: 1, stdout: "", stderr: "" },
+      { exitCode: 1, stdout: "", stderr: "" },
+    ];
+
+    await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
+    const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory }, runner);
+
+    expect(outcome.method).toBe("profile-existing");
+    const profile = await readFile(join(home, ".profile"), "utf8");
+    expect(profile.split(result.paths.binDirectory)).toHaveLength(2);
+  });
+
+  test("prompts for sudo authorization only when the caller opts in", async () => {
+    const home = await temporaryHome();
+    const { result } = await initialized(home);
+    const systemBinDirectory = join(await temporaryHome(), "not-writable-at-all-2");
+    const runner = new FakeRunner();
+    runner.results = [
+      { exitCode: 1, stdout: "", stderr: "" }, // passwordless sudo -n for shis fails
+      { exitCode: 0, stdout: "", stderr: "" }, // sudo -v succeeds (password entered)
+      { exitCode: 0, stdout: "", stderr: "" }, // sudo -n ln for shis
+      { exitCode: 0, stdout: "", stderr: "" }, // sudo -n ln for shibumi-server
+    ];
+
+    const outcome = await ensurePathIntegration(home, result.paths, { systemBinDirectory, allowSudoPrompt: true }, runner);
+
+    expect(outcome.method).toBe("symlink");
+    expect(runner.calls[1]).toEqual(["sudo", "-v"]);
   });
 });
 

@@ -92,7 +92,9 @@ To prepare the server directly, log in as the deployment user and run:
 curl -fsSL https://server.shibumistack.dev/install | bash
 ```
 
-The bootstrap installs Bun when needed, then runs setup. Setup checks the host before changing config. It installs the fixed release locally, creates restricted config and secret files, writes the systemd user service, and installs `shis` in `~/.local/bin`. The service runs that local release until you update it. Put `~/.local/bin` on `PATH`.
+The bootstrap installs Bun when needed, then runs setup. Setup checks the host before changing config. It installs the fixed release locally, creates restricted config and secret files, writes the systemd user service, and installs `shis` in `~/.local/bin`. The service runs that local release until you update it.
+
+`~/.local/bin` alone doesn't reach non-interactive `ssh host shis ...` sessions on many systems, since they skip `~/.profile` and `~/.bashrc` entirely. Setup also symlinks `shis` into `/usr/local/bin`, asking sudo for a password only if that directory isn't already writable. Without sudo it falls back to appending `~/.local/bin` to `~/.profile` and says so, including the caveat that this only helps sessions the remote shell treats as login shells.
 
 Add an app on the server with:
 
@@ -124,7 +126,15 @@ shis list
 shis remove example.com
 ```
 
-Removal deletes Shibumi config, secret, status, managed Caddy route, per-app environment store, and app containers. It keeps the checkout, volumes, images, and GitHub webhook. Remove that webhook in GitHub when the domain no longer deploys from its repository. `--yes` skips Shibumi confirmation, not sudo. Removing the last app stops the service.
+Removal deletes Shibumi config, secret, status, managed Caddy route, per-app environment store, and app containers. It keeps the checkout, volumes, images, and GitHub webhook, and its outro says so explicitly. Remove that webhook in GitHub when the domain no longer deploys from its repository. `--yes` skips Shibumi confirmation, not sudo. Removing the last app stops the service. Re-registering the same domain under a different repository reuses that checkout, so delete it first if you mean to start clean, or use `shis set-repository` below.
+
+Point an already-registered app at a different repository:
+
+```bash
+shis set-repository example.com github:owner/new-repository
+```
+
+The old checkout moves to `<checkout>.bak`, Shibumi clones the new repository in its place, and the registration updates, without touching Caddy or re-registering the app. `--yes` skips confirmation. It refuses only if `<checkout>.bak` already exists. `shis add` offers the same move when it finds a checkout whose origin doesn't match the repository you're adding.
 
 Set per-app environment values and secrets, injected into the container at each deploy:
 

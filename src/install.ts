@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { chmod, cp, lstat, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { access, chmod, cp, lstat, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseConfig, type AppConfig, type ServerConfig } from "./config";
 import { BunCommandRunner, type CommandRunner } from "./deploy";
@@ -76,8 +77,19 @@ export interface CheckoutManager {
   prepare(options: Pick<AddAppOptions, "repository" | "ref" | "checkout" | "composeFile">): Promise<string>;
 }
 
+export interface CheckoutMismatch {
+  checkout: string;
+  backup: string;
+  repository: string;
+}
+
+export type ConfirmCheckoutReplacement = (mismatch: CheckoutMismatch) => Promise<boolean>;
+
 export class GitCheckoutManager implements CheckoutManager {
-  constructor(private readonly runner: CommandRunner = new BunCommandRunner()) {}
+  constructor(
+    private readonly runner: CommandRunner = new BunCommandRunner(),
+    private readonly confirmReplacement?: ConfirmCheckoutReplacement,
+  ) {}
 
   async prepare(options: Pick<AddAppOptions, "repository" | "ref" | "checkout" | "composeFile">): Promise<string> {
     const existingCheckout = await exists(options.checkout);
@@ -96,7 +108,18 @@ export class GitCheckoutManager implements CheckoutManager {
     const expected = options.repository.toLowerCase();
     const actual = origin.stdout.trim().toLowerCase().replace(/\.git$/, "");
     if (!actual.endsWith(`/${expected}`) && !actual.endsWith(`:${expected}`)) {
-      throw new Error(`checkout origin does not match ${options.repository}.\n\nNext: choose the checkout for ${options.repository}, or fix its origin, then rerun add.`);
+      const backup = `${options.checkout}.bak`;
+      if (await exists(backup)) {
+        throw new Error(`checkout origin does not match ${options.repository}, and ${backup} already exists.\n\nNext: remove or rename ${backup}, then rerun add.`);
+      }
+      const proceed = this.confirmReplacement
+        ? await this.confirmReplacement({ checkout: options.checkout, backup, repository: options.repository })
+        : false;
+      if (!proceed) {
+        throw new Error(`checkout origin does not match ${options.repository}.\n\nNext: choose the checkout for ${options.repository}, fix its origin, or rerun add --yes to move it to ${backup} and clone fresh.`);
+      }
+      await rename(options.checkout, backup);
+      return this.prepare(options);
     }
     const access = await this.runner.run("git", [
       "-C", options.checkout, "ls-remote", "--exit-code", "origin", options.ref ?? "refs/heads/main",
@@ -211,6 +234,98 @@ async function atomicWrite(path: string, content: string, mode: number): Promise
   } finally {
     await rm(temporary, { force: true }).catch(() => {});
   }
+}
+
+const DEFAULT_SYSTEM_BIN_DIRECTORY = "/usr/local/bin";
+const PROFILE_PATH_MARK = "# shibumi-server: keep shis on PATH for non-interactive SSH sessions";
+
+export interface PathIntegrationResult {
+  method: "symlink" | "profile-appended" | "profile-existing";
+  detail: string;
+}
+
+async function canWrite(path: string): Promise<boolean> {
+  try {
+    await access(path, fsConstants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function symlinkLaunchers(
+  paths: InstallationPaths,
+  systemBinDirectory: string,
+  runner: CommandRunner,
+  tryPasswordlessSudo: boolean,
+): Promise<boolean> {
+  const links: Array<[string, string]> = [
+    [paths.shortLauncher, join(systemBinDirectory, "shis")],
+    [paths.launcher, join(systemBinDirectory, "shibumi-server")],
+  ];
+  if (await canWrite(systemBinDirectory)) {
+    for (const [target, link] of links) {
+      await rm(link, { force: true }).catch(() => {});
+      await symlink(target, link);
+    }
+    return true;
+  }
+  if (!tryPasswordlessSudo) return false;
+  for (const [target, link] of links) {
+    const result = await runner.run("sudo", ["-n", "ln", "-sf", target, link], { capture: true, timeoutMs: 10_000 });
+    if (result.exitCode !== 0) return false;
+  }
+  return true;
+}
+
+async function appendProfilePath(home: string, binDirectory: string): Promise<"appended" | "existing"> {
+  const profilePath = join(home, ".profile");
+  let content = "";
+  try {
+    content = await readFile(profilePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  if (content.includes(binDirectory)) return "existing";
+  const prefix = content.length === 0 || content.endsWith("\n") ? content : `${content}\n`;
+  const separator = prefix.length === 0 ? "" : "\n";
+  await writeFile(profilePath, `${prefix}${separator}${PROFILE_PATH_MARK}\nexport PATH="${binDirectory}:$PATH"\n`, { mode: 0o644 });
+  return "appended";
+}
+
+// Non-interactive `ssh host shis ...` sessions often skip ~/.local/bin: many
+// shells only read ~/.profile for login shells, and some skip it entirely for
+// a single remote command. A real symlink in /usr/local/bin is the only fix
+// that works everywhere, so it is tried first; ~/.profile is a best-effort
+// fallback that only helps when the remote shell treats the session as login.
+export async function ensurePathIntegration(
+  home: string,
+  paths: InstallationPaths,
+  options: { allowSudoPrompt?: boolean; systemBinDirectory?: string } = {},
+  runner: CommandRunner = new BunCommandRunner(),
+): Promise<PathIntegrationResult> {
+  const systemBinDirectory = options.systemBinDirectory ?? DEFAULT_SYSTEM_BIN_DIRECTORY;
+  let symlinked = false;
+  try {
+    symlinked = await symlinkLaunchers(paths, systemBinDirectory, runner, true);
+    if (!symlinked && options.allowSudoPrompt) {
+      const authorization = await runner.run("sudo", ["-v"], { capture: false, stdin: "inherit", timeoutMs: 120_000 });
+      if (authorization.exitCode === 0) symlinked = await symlinkLaunchers(paths, systemBinDirectory, runner, true);
+    }
+  } catch {
+    symlinked = false;
+  }
+  if (symlinked) {
+    return { method: "symlink", detail: `${systemBinDirectory}/shis -> ${paths.shortLauncher}` };
+  }
+
+  const outcome = await appendProfilePath(home, paths.binDirectory);
+  return {
+    method: outcome === "existing" ? "profile-existing" : "profile-appended",
+    detail: outcome === "existing"
+      ? `${paths.binDirectory} is already on PATH via ~/.profile`
+      : `${paths.binDirectory} added to ~/.profile — only takes effect for login shells, so some "ssh host shis ..." sessions still won't see it. For a fix that always works, run: sudo ln -sf ${paths.shortLauncher} ${systemBinDirectory}/shis`,
+  };
 }
 
 function systemdPath(value: string): string {
@@ -579,4 +694,61 @@ export async function markCaddyManaged(home: string, appId: string): Promise<voi
   };
   parseConfig(candidate);
   await atomicWrite(paths.config, `${JSON.stringify(candidate, null, 2)}\n`, 0o600);
+}
+
+export interface SetRepositoryResult {
+  appId: string;
+  domain: string;
+  checkout: string;
+  backup: string;
+  repository: string;
+  ref: string;
+}
+
+export async function setAppRepository(
+  home: string,
+  selector: string,
+  repository: string,
+  ref: string | undefined,
+  services: ServiceManager = new SystemdUserServiceManager(),
+  checkouts: CheckoutManager = new GitCheckoutManager(),
+): Promise<SetRepositoryResult> {
+  const paths = installationPaths(resolve(home));
+  const root = await rawConfig(paths.config);
+  const rawApps = root.apps;
+  if (!rawApps || typeof rawApps !== "object" || Array.isArray(rawApps)) throw new Error("config.apps must be an object");
+  if (Object.keys(rawApps).length === 0) throw new Error(`unknown app: ${selector}.\n\nNext: run shis list and choose a domain or app ID.`);
+  const parsed = parseConfig(root);
+  const match = Object.entries(parsed.apps).find(([appId, app]) => appId === selector || app.domain === selector);
+  if (!match) throw new Error(`unknown app: ${selector}.\n\nNext: run shis list and choose a domain or app ID.`);
+  const [appId, app] = match;
+  const backup = `${app.checkout}.bak`;
+  if (await exists(backup)) {
+    throw new Error(`${backup} already exists.\n\nNext: remove or rename ${backup}, then rerun set-repository.`);
+  }
+  const nextRef = ref ?? app.ref;
+
+  // Validate the new repository/ref against config.apps.*.repository|ref grammar
+  // before touching the checkout, so a bad value never leaves the app mid-move.
+  const apps = root.apps as Record<string, unknown>;
+  const existingApp = apps[appId] as Record<string, unknown>;
+  parseConfig({ ...root, apps: { ...apps, [appId]: { ...existingApp, repository, ref: nextRef } } });
+
+  await rename(app.checkout, backup);
+  let composeFile: string;
+  try {
+    composeFile = await checkouts.prepare({ repository, ref: nextRef, checkout: app.checkout });
+  } catch (error) {
+    await rename(backup, app.checkout).catch(() => {});
+    throw error;
+  }
+
+  const candidate = {
+    ...root,
+    apps: { ...apps, [appId]: { ...existingApp, repository, ref: nextRef, composeFile } },
+  };
+  parseConfig(candidate);
+  await atomicWrite(paths.config, `${JSON.stringify(candidate, null, 2)}\n`, 0o600);
+  await services.enableAndRestart();
+  return { appId, domain: app.domain ?? appId, checkout: app.checkout, backup, repository, ref: nextRef };
 }

@@ -42,6 +42,7 @@ shis uninstall [--purge] [--yes]
 shis list
 shis add <domain> [--dry-run]
 shis remove <domain|app-id> [--yes]
+shis set-repository <domain|app-id> <repository> [--yes]
 ```
 
 Explicit add needs repository, absolute checkout, and port:
@@ -59,6 +60,8 @@ shis add <domain> \
   [--dry-run] \
   [-- <test-command...>]
 ```
+
+`set-repository` moves the existing checkout to `<checkout>.bak`, clones the new repository in its place, and updates the registration without touching Caddy or re-registering the app. `shis add` offers the same move when an existing checkout's Git origin doesn't match the repository being added.
 
 ### Environment
 
