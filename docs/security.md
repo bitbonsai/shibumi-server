@@ -12,6 +12,8 @@ HMAC proves that GitHub sent the request. It does not stop large volumes of traf
 
 Each app gets a random 32-byte webhook secret in a mode-`0600` server file. Client config excludes it. `webhook-secret` prints JSON only for the explicit SSH-to-GitHub handoff, so the client can keep the value in memory.
 
+App runtime secrets live in the per-app [environment store](/docs/app-env): one mode-`0600` file per app, values accepted over stdin, names-only listing, injected into the container at deploy.
+
 Do not commit webhook secrets, app keys, repository credentials, registry credentials, TLS keys, databases, backups, or raw payload logs.
 
 ## Caddy privileges

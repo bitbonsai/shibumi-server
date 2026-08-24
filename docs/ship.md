@@ -67,6 +67,15 @@ Docker keeps layer cache. Use `bun ship --rebuild` for a no-cache build. Git sub
 
 Agents can run `bun ship -y` when the routine confirmation is safe to accept. Clean-tree checks, project checks, image verification, and failures still run. Missing SSH, GitHub, domain, registration, or cutover prerequisites stop and tell the agent to ask you.
 
+## Configure app environment
+
+```sh
+bun ship:env set APP_ORIGIN=https://example.com
+bun ship
+```
+
+Runtime configuration and secrets stay on the server, injected into the container at each deploy. See [Environment and secrets](/docs/app-env).
+
 ## Change setup later
 
 ```sh

@@ -14,6 +14,7 @@ For server-side setup or automation, [register the app with `shis add`](/docs/ad
 
 - [Deployments](/docs/deployments) traces the image from local build through server health check.
 - [History and rollback](/docs/history-rollback) explains deployment records and the 12-hour rollback window.
+- [Environment and secrets](/docs/app-env) covers per-app values with `ship:env` and `shis env`.
 - [Operations](/docs/operations) lists status, update, removal, log, and uninstall commands.
 - [Security model](/docs/security) defines trust boundaries and secret storage.
 

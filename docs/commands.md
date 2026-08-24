@@ -14,6 +14,10 @@ bun ship:update                 Review and install the current Ship client
 bun ship:status                 Compare server status with local HEAD
 bun ship:logs                   Read the latest bounded deployment log
 bun ship --rollback             Restore the retained previous image
+bun ship:env set KEY=VALUE ...  Set app environment values on the server
+bun ship:env import [file]      Import a local .env file (default .env.production)
+bun ship:env list               List variable names, never values
+bun ship:env rm KEY ...         Remove variables
 ```
 
 `bun dev` runs the project's original development command, stored as `dev:app`, with `PORT` and `SHIBUMI_PORT` set to the registered app port.
@@ -55,6 +59,16 @@ shis add <domain> \
   [--dry-run] \
   [-- <test-command...>]
 ```
+
+### Environment
+
+```text
+shis env set <app-id>             Set vars from KEY=VALUE lines on stdin
+shis env list <app-id> [--json]   List variable names, never values
+shis env rm <app-id> <KEY...>     Remove variables
+```
+
+Values inject into the app container at the next deploy. See [Environment and secrets](/docs/app-env).
 
 ### Deploys
 

@@ -13,6 +13,7 @@ Source: https://github.com/bitbonsai/shibumi-server
 - [Connect project](/docs/ship.md): project-owned Ship setup and local prebuilt deployment.
 - [Deployments](/docs/deployments.md): client and server pipelines, checks, health, and resource defaults.
 - [History and rollback](/docs/history-rollback.md): bounded records and 12-hour rollback retention.
+- [Environment and secrets](/docs/app-env.md): per-app runtime values via ship:env and shis env, injected at deploy.
 - [Operations](/docs/operations.md): status, updates, removal, uninstall, and service logs.
 - [Security model](/docs/security.md): webhook, secret, image, Caddy, and resource trust boundaries.
 - [Command reference](/docs/commands.md): `shis` commands and options.

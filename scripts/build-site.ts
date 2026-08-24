@@ -14,6 +14,7 @@ const pages = [
   { path: "ship", title: "Connect project", description: "Add project-owned Ship tooling and point it at shibumi-server.", section: "Start", source: "docs/ship.md" },
   { path: "deployments", title: "Deployments", description: "Follow local builds, server checks, health checks, and replacement.", section: "Operate", source: "docs/deployments.md" },
   { path: "history-rollback", title: "History and rollback", description: "See recent deploys and restore the previous retained image.", section: "Operate", source: "docs/history-rollback.md" },
+  { path: "app-env", title: "Environment and secrets", description: "Manage per-app runtime values with ship:env and shis env.", section: "Operate", source: "docs/app-env.md" },
   { path: "operations", title: "Operations", description: "Check status, update, remove, inspect, and uninstall.", section: "Operate", source: "docs/operations.md" },
   { path: "security", title: "Security model", description: "See what Shibumi trusts and where secrets live.", section: "Reference", source: "docs/security.md" },
   { path: "commands", title: "Command reference", description: "Commands and options available through shis.", section: "Reference", source: "docs/commands.md" },

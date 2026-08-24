@@ -22,6 +22,15 @@ shis status example-com --commit <full-sha> --json
 
 Status is the latest snapshot for one app. [History](/docs/history-rollback) keeps the latest 100 durable records.
 
+## App environment
+
+```sh
+printf 'RESEND_API_KEY=re_xxx\n' | shis env set example-com
+shis env list example-com
+```
+
+Per-app values injected at deploy. Values arrive on stdin and are stored in a mode-`0600` file; `list` prints names only. Details in [Environment and secrets](/docs/app-env).
+
 ## Update
 
 ```sh
