@@ -1,6 +1,6 @@
 {
   "name": "shibumi-server",
-  "version": "0.10.6",
+  "version": "0.10.7",
   "description": "Deploy apps to a Linux VPS with rootless Podman.",
   "license": "MIT",
   "type": "module",
