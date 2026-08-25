@@ -152,3 +152,15 @@ code { padding:.07em .28em; border-radius:.2rem; background:var(--faint); font:v
   .footer-meta { flex-wrap:wrap; }
 }
 @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } * { transition:none!important; } .typing-cursor,.terminal-replay { display:none; } }
+
+.hero-note { margin:.9rem 0 0; font-size:.95rem; }
+.cutover-steps { max-width:none; margin:.6rem 0 0; padding-left:1.3rem; color:var(--muted); line-height:1.7; }
+.cutover-steps li + li { margin-top:.25rem; }
+/* command blocks keep the dark code background in both themes, so syntax colors pin to the dark palette */
+.command-block .syntax-command { color:#ff8648; }
+.command-block .syntax-option { color:#89dceb; }
+.json-block { margin:1rem 0 0; padding:1rem 1.15rem; overflow-x:auto; border-radius:.45rem; background:var(--code); color:var(--code-ink); font-size:.85rem; line-height:1.6; }
+.json-block code { background:transparent; padding:0; white-space:pre; }
+.json-block .syntax-key { color:#cba6f7; }
+.json-block .syntax-string { color:#a6e3a1; }
+.json-block .syntax-number, .json-block .syntax-literal { color:#fab387; }
