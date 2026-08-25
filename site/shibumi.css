@@ -81,15 +81,15 @@ h1, h2, h3 {
 
 a { color: inherit; }
 
-main a:not(.btn):not(.button) {
+main a:where(:not(.btn)):where(:not(.button)) {
     text-decoration: underline;
     text-decoration-color: color-mix(in srgb, var(--accent) 30%, transparent);
     text-underline-offset: 0.18em;
     transition: text-decoration-color 160ms ease;
 }
 
-main a:not(.btn):not(.button):hover,
-main a:not(.btn):not(.button):focus-visible {
+main a:where(:not(.btn)):where(:not(.button)):hover,
+main a:where(:not(.btn)):where(:not(.button)):focus-visible {
     text-decoration-color: var(--accent);
 }
 
