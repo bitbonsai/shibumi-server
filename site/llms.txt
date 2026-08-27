@@ -3,7 +3,7 @@
 > Small deployment service for exact locally built images on a Linux VPS using rootless Podman Compose, Caddy, and systemd.
 
 Canonical site: https://server.shibumistack.dev
-Source: https://github.com/bitbonsai/shibumi-server
+Source: https://github.com/shibumistack/shibumi-server
 
 ## Documentation
 

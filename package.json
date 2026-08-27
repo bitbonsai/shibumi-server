@@ -41,10 +41,10 @@
   "homepage": "https://server.shibumistack.dev",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bitbonsai/shibumi-server.git"
+    "url": "git+https://github.com/shibumistack/shibumi-server.git"
   },
   "bugs": {
-    "url": "https://github.com/bitbonsai/shibumi-server/issues"
+    "url": "https://github.com/shibumistack/shibumi-server/issues"
   },
   "keywords": [
     "shibumi",

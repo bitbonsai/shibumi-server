@@ -14,7 +14,7 @@ log.success("DNS detected (cloudflare)");
 
 const repository = await text({
   message: "Where's the repository?",
-  initialValue: "https://github.com/bitbonsai/vibetoolbox",
+  initialValue: "https://github.com/shibumistack/shibumi-server",
 });
 if (cancelled(repository)) process.exit(0);
 

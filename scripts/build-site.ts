@@ -131,7 +131,7 @@ export async function buildSite(log = true): Promise<void> {
     await writeFile(`${output}/docs/${page.path ? `${page.path}.md` : "index.md"}`, markdown);
   }
 
-  await writeFile(`${output}/install`, `#!/bin/sh\nset -eu\ncurl -fsSL https://raw.githubusercontent.com/bitbonsai/shibumi-server/v${version}/install.sh | bash\n`);
+  await writeFile(`${output}/install`, `#!/bin/sh\nset -eu\ncurl -fsSL https://raw.githubusercontent.com/shibumistack/shibumi-server/v${version}/install.sh | bash\n`);
   await writeFile(`${output}/robots.txt`, "User-agent: *\nAllow: /\nSitemap: https://server.shibumistack.dev/sitemap.xml\n");
   const routes = ["", ...pages.map(({ path }) => path ? `docs/${path}` : "docs")];
   await writeFile(`${output}/sitemap.xml`, `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${routes.map((route) => `<url><loc>https://server.shibumistack.dev/${route}</loc></url>`).join("")}</urlset>\n`);

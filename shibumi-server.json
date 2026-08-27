@@ -6,7 +6,7 @@
   },
   "domain": "server.shibumistack.dev",
   "appId": "server-shibumistack-dev",
-  "repository": "github:bitbonsai/shibumi-server",
+  "repository": "github:shibumistack/shibumi-server",
   "branch": "main",
   "webhookUrl": "https://server.shibumistack.dev/hooks/github/server-shibumistack-dev",
   "service": "app",

@@ -11,8 +11,8 @@ describe("GitHub repository input", () => {
   });
 
   test("extracts branches from GitHub tree URLs", () => {
-    expect(parseGitHubRepositoryTarget("https://github.com/bitbonsai/mcpvault/tree/shibumi")).toEqual({
-      repository: "bitbonsai/mcpvault",
+    expect(parseGitHubRepositoryTarget("https://github.com/shibumistack/shibumi-server/tree/shibumi")).toEqual({
+      repository: "shibumistack/shibumi-server",
       ref: "refs/heads/shibumi",
     });
   });

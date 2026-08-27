@@ -64,7 +64,7 @@ const server = Bun.serve({
       return new Response(body, { headers: { "Cache-Control": "no-cache", "Content-Type": "text/event-stream" } });
     }
     if (pathname === "/install") {
-      return new Response(`#!/bin/sh\nset -eu\ncurl -fsSL https://raw.githubusercontent.com/bitbonsai/shibumi-server/v${packageJson.version}/install.sh | bash\n`, {
+      return new Response(`#!/bin/sh\nset -eu\ncurl -fsSL https://raw.githubusercontent.com/shibumistack/shibumi-server/v${packageJson.version}/install.sh | bash\n`, {
         headers: { "Content-Type": "text/plain; charset=utf-8" },
       });
     }
