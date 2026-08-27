@@ -920,6 +920,7 @@ export async function runSetRepository(
     `App         ${app.domain} (${app.appId})`,
     `Repository  github:${app.repository} -> github:${repository}`,
     `Checkout    ${app.checkout} moves to ${backup}; fresh clone from github:${repository} (Compose file is re-detected)`,
+    "Environment  existing .env and .env.production files are retained",
   ].join("\n"));
   if (!yes) {
     const accepted = await ui.confirm({

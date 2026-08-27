@@ -846,6 +846,35 @@ export interface SetRepositoryResult {
   ref: string;
 }
 
+const CHECKOUT_ENVIRONMENT_FILES = [".env", ".env.production"];
+
+async function preserveCheckoutEnvironmentFiles(backup: string, checkout: string): Promise<void> {
+  for (const filename of CHECKOUT_ENVIRONMENT_FILES) {
+    const source = join(backup, filename);
+    let sourceStats;
+    try {
+      sourceStats = await lstat(source);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw new Error(`could not inspect ${source}: ${error instanceof Error ? error.message : String(error)}.\n\nNext: verify the old checkout, then rerun set-repository.`);
+    }
+    if (!sourceStats.isFile()) {
+      throw new Error(`${source} is not a regular file.\n\nNext: replace it with a regular environment file, then rerun set-repository.`);
+    }
+    const destination = join(checkout, filename);
+    const temporary = join(checkout, `.${filename}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
+    try {
+      await cp(source, temporary);
+      await chmod(temporary, 0o600);
+      await rename(temporary, destination);
+    } catch (error) {
+      throw new Error(`could not preserve ${filename}: ${error instanceof Error ? error.message : String(error)}.\n\nNext: verify that ${checkout} is writable, then rerun set-repository.`);
+    } finally {
+      await rm(temporary, { force: true }).catch(() => {});
+    }
+  }
+}
+
 export async function setAppRepository(
   home: string,
   selector: string,
@@ -882,6 +911,7 @@ export async function setAppRepository(
   let candidate: { apps: Record<string, unknown> } & Record<string, unknown>;
   try {
     const composeFile = await checkouts.prepare({ repository, ref: nextRef, checkout: app.checkout });
+    await preserveCheckoutEnvironmentFiles(backup, app.checkout);
     candidate = {
       ...root,
       apps: { ...apps, [appId]: { ...existingApp, repository, ref: nextRef, composeFile } },

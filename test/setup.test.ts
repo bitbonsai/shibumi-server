@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CommandOptions, CommandResult, CommandRunner } from "../src/deploy";
@@ -310,6 +310,31 @@ describe("runSetRepository", () => {
     expect(services.restarts).toBe(1);
     const config = JSON.parse(await readFile(installationPaths(home).config, "utf8"));
     expect(config.apps["example-com"].repository).toBe("owner/new-repo");
+  });
+
+  test("preserves private environment files in the fresh checkout", async () => {
+    const home = await temporaryHome();
+    await initializeInstallation({ home, packageRoot: resolve(import.meta.dir, ".."), bunExecutable: process.execPath }, new NoopServices());
+    const checkoutRoot = await temporaryHome();
+    const checkout = join(checkoutRoot, "example-com");
+    await mkdir(checkout, { recursive: true });
+    await writeFile(join(checkout, ".env"), "PUBLIC_URL=https://example.com\n", { mode: 0o600 });
+    await writeFile(join(checkout, ".env.production"), "EMAIL_PROVIDER=discard\n", { mode: 0o600 });
+    await addApp({ home, domain: "example.com", repository: "owner/repository", checkout, hostPort: 9_100 }, new NoopServices(), noopCheckouts);
+    const clonedCheckout: CheckoutManager = {
+      async prepare(options) {
+        await mkdir(options.checkout, { recursive: true });
+        return "compose.yaml";
+      },
+    };
+
+    await runSetRepository(home, "example-com", "owner/new-repo", undefined, true, new NoopServices(), clonedCheckout, fakeUi());
+
+    expect(await readFile(join(checkout, ".env"), "utf8")).toBe("PUBLIC_URL=https://example.com\n");
+    expect(await readFile(join(checkout, ".env.production"), "utf8")).toBe("EMAIL_PROVIDER=discard\n");
+    expect((await stat(join(checkout, ".env"))).mode & 0o777).toBe(0o600);
+    expect((await stat(join(checkout, ".env.production"))).mode & 0o777).toBe(0o600);
+    expect(await readFile(`${checkout}.bak/.env`, "utf8")).toBe("PUBLIC_URL=https://example.com\n");
   });
 
   test("skips the prompt with --yes", async () => {
