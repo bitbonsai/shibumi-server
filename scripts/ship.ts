@@ -500,8 +500,8 @@ RUN bun install --frozen-lockfile
 
 COPY . .
 ${hasBuildScript ? "RUN bun run build\n\n" : ""}ENV HOST=0.0.0.0
-ENV PORT=3000
-EXPOSE 3000
+ENV PORT=9001
+EXPOSE 9001
 
 CMD ["bun", "run", "start"]
 `,
@@ -509,13 +509,13 @@ CMD ["bun", "run", "start"]
   app:
     build: .
     ports:
-      - "127.0.0.1:\${SHIBUMI_PORT:-9001}:3000"
+      - "127.0.0.1:\${SHIBUMI_PORT:-9001}:9001"
     environment:
       HOST: 0.0.0.0
-      PORT: "3000"
+      PORT: "9001"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:9001/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -623,7 +623,7 @@ import { join, normalize } from "node:path";
 
 const ROOT = ${JSON.stringify(`/www`)};
 const server = Bun.serve({
-  port: 3000,
+  port: 9001,
   async fetch(request) {
     if (request.method !== "GET" && request.method !== "HEAD") return new Response("Not found", { status: 404 });
     let pathname;
@@ -662,7 +662,7 @@ WORKDIR /app
 COPY ${config.outputDir} /www
 COPY scripts/static-server.ts ./static-server.ts
 USER bun
-EXPOSE 3000
+EXPOSE 9001
 CMD ["bun", "static-server.ts"]
 `
     : `FROM ${BUSYBOX_IMAGE} AS busybox
@@ -671,19 +671,19 @@ FROM scratch
 COPY --from=busybox /bin/busybox /busybox
 COPY --chown=65534:65534 ${config.outputDir} /www
 USER 65534:65534
-EXPOSE 3000
-ENTRYPOINT ["/busybox", "httpd", "-f", "-p", "3000", "-h", "/www", "-c", "/www/httpd.conf"]
+EXPOSE 9001
+ENTRYPOINT ["/busybox", "httpd", "-f", "-p", "9001", "-h", "/www", "-c", "/www/httpd.conf"]
 `;
   const healthcheck = config.spa
-    ? `["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]`
-    : `["CMD", "/busybox", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://127.0.0.1:3000/"]`;
+    ? `["CMD", "bun", "-e", "fetch('http://127.0.0.1:9001/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]`
+    : `["CMD", "/busybox", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://127.0.0.1:9001/"]`;
   return {
     Dockerfile: dockerfile,
     "compose.yaml": `services:
   app:
     build: .
     ports:
-      - "127.0.0.1:\${SHIBUMI_PORT:-9001}:3000"
+      - "127.0.0.1:\${SHIBUMI_PORT:-9001}:9001"
     labels:
 ${staticComposeLabels(config)}
     restart: unless-stopped
@@ -2110,7 +2110,7 @@ async function runDev(): Promise<void> {
   // setup, fall back to the Shibumi port convention (registered apps get the
   // first free port above 9000) and skip the Remote row.
   const config = await readConfig();
-  const port = config?.port ?? 9000;
+  const port = config?.port ?? 9001;
   if (await portIsBusy(port)) {
     const lsof = Bun.which("lsof");
     const fuser = Bun.which("fuser");

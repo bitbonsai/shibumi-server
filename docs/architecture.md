@@ -115,7 +115,7 @@ Compose binds only loopback:
 services:
   web:
     ports:
-      - "127.0.0.1:${SHIBUMI_PORT}:3000"
+      - "127.0.0.1:${SHIBUMI_PORT}:9001"
 ```
 
 Caddy maps the public domain to that port. Managed proxies use a 20-second `lb_try_duration`, so requests wait while Compose briefly releases the port during replacement. Existing long-lived connections can still fail, and a restart past that budget returns an upstream error.
