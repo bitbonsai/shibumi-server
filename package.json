@@ -21,6 +21,7 @@
     "ship": "bun scripts/ship.ts",
     "ship:setup": "bun scripts/ship.ts --setup",
     "ship:update": "bun scripts/ship.ts --update",
+    "sync:ship": "bun scripts/sync-ship.ts",
     "ship:logs": "bun scripts/ship.ts --logs",
     "dev:app": "bun scripts/dev-site.ts",
     "ship:status": "bun scripts/ship.ts --status"

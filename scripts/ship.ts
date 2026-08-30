@@ -26,7 +26,7 @@ const SERVER_HOSTNAME = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 const COMMIT = /^[a-f0-9]{40}$/;
 const SERVER_CLI = "~/.local/bin/shibumi-server";
 const LATEST_SOURCE = "https://shibumistack.dev/ship/latest.ts";
-const CURRENT_SOURCE = "https://shibumistack.dev/ship/v48.ts";
+const CURRENT_SOURCE = "https://shibumistack.dev/ship/v51.ts";
 let sshControlDirectory: string | undefined;
 let sshControlTarget: string | undefined;
 
@@ -1805,11 +1805,46 @@ async function verifyDockerCredentialHelpers(): Promise<void> {
   }
 }
 
+// Distinguish a socket permission problem from a stopped engine so the
+// message points at the real fix. The common case is a shell session that
+// predates a docker group change: the account is a member in /etc/group,
+// but the session's groups froze at login, so the socket still denies it.
+async function dockerGroupAdvice(): Promise<string> {
+  const me = process.env.USER || process.env.LOGNAME || "";
+  if (!me || me === "root") return "";
+  const current = await run(["id", "-nG"], { allowFailure: true });
+  const sessionHasGroup = current.exitCode === 0 && /(?:^|\s)docker(?:\s|$)/.test(current.stdout);
+  const groupLine = (await run(["getent", "group", "docker"], { allowFailure: true })).stdout.trim();
+  const members = new Set((groupLine.split(":")[3] ?? "").split(",").filter(Boolean));
+  if (members.has(me) && !sessionHasGroup) {
+    return `\n\n${me} is in the docker group, but this shell session started before that group change and still lacks it. Log out and back in, or rerun the ship command in a docker-group shell (newgrp docker, or sg docker -c 'bun scripts/ship.ts').`;
+  }
+  if (!members.has(me)) {
+    return `\n\n${me} is not in the docker group, which owns the Docker socket. Add your account, then log out and back in:\n\n  sudo usermod -aG docker ${me}`;
+  }
+  return "";
+}
+
+async function dockerEngineErrorMessage(detail: string): Promise<string> {
+  const next = "\n\nNext: start or restart it, then run docker info. When docker info shows Server details, run bun ship again.\n\nColima: colima restart\nPodman: podman machine restart\nDocker Desktop: open or restart Docker Desktop\n\nHelp: https://shibumistack.dev/docs/ship/troubleshooting#docker-engine";
+  if (!Bun.which("docker")) {
+    return `Docker CLI is not installed or not on your PATH (${detail || "docker: command not found"}).\n\nNext: install Docker, verify docker info, then run bun ship.\n\nHelp: https://shibumistack.dev/docs/ship/troubleshooting#docker-engine`;
+  }
+  if (/permission denied/i.test(detail)) {
+    const advice = await dockerGroupAdvice();
+    return `Docker cannot reach your container engine: the Docker socket refused your user (${detail}).${advice}\n\nVerify with docker info (Client and Server sections), then run bun ship again.\n\nHelp: https://shibumistack.dev/docs/ship/troubleshooting#docker-engine`;
+  }
+  if (/cannot connect to the docker daemon|connection refused|no such file or directory/i.test(detail)) {
+    return `Docker cannot reach your container engine.${next}`;
+  }
+  return `Docker cannot reach your container engine (${detail}).${next}`;
+}
+
 async function localBuildFrontend(config: ClientConfig): Promise<string[] | undefined> {
   if (config.deploymentMode !== "prebuilt") return undefined;
   if (!config.platform) throw new Error("server image platform is missing.\n\nNext: run bun ship:setup.");
   const docker = await run(["docker", "info"], { allowFailure: true });
-  if (docker.exitCode !== 0) throw new Error("Docker CLI cannot reach a compatible engine.\n\nNext: start Colima with colima start, verify docker info, then run bun ship.");
+  if (docker.exitCode !== 0) throw new Error(await dockerEngineErrorMessage(docker.stderr.trim() || docker.stdout.trim()));
   const plugin = await run(["docker", "compose", "version"], { allowFailure: true });
   const standalone = plugin.exitCode === 0
     ? undefined

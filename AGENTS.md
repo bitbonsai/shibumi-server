@@ -29,6 +29,19 @@ The marketing site's shared design layer is vendored: `site/shibumi.css` is a co
 
 Create and push matching `v${version}` Git tag at release commit before `npm publish`. Postpublish website sync verifies tagged `install.sh`; publishing first uploads package but leaves sync failed.
 
+The vendored Ship client (`scripts/ship.ts`) is byte-locked to the published immutable snapshot in `scripts/ship.lock.json`. Never hand-edit it; to upgrade, bump the lock to the new `vN.ts` URL + sha256, run `bun run sync:ship`, review, commit. `test/ship-sync.test.ts` fails the build on drift, so the client updates as a deliberate lock + sync step, not a silent edit.
+
+## Upstream releases (shibumistack.dev)
+
+shibumistack.dev is the canonical source for shared artifacts; when it publishes a new one, this repo owes a follow-up. The full flow lives in `create-shibumi/PUBLISHING.md` → "Ship client releases".
+
+| Published on shibumistack.dev | Follow-up here |
+|---|---|
+| Ship client (`/ship/latest.ts` → new `vN.ts`) | Bump `scripts/ship.lock.json` to the new URL + sha256, `bun run sync:ship`, review, commit. `test/ship-sync.test.ts` fails the build on drift. |
+| `public/shibumi.css` (design tokens) | Re-run `scripts/sync-shibumi-css.sh`, review, commit. Never hand-edit the vendored copy. |
+| create-shibumi CLI / shibumi-server releases | No action here; the site repo bumps its `createShibumiVersion` / `shibumiServerVersion` fields. |
+
+
 ## Security invariants
 
 - Reject malformed event, delivery UUID, and signature headers before reading the request body; verify `X-Hub-Signature-256` over the raw body before parsing payload data.
